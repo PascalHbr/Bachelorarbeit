@@ -40,7 +40,7 @@ def get_mu_and_prec(part_maps, device, scal):
     x_t = torch.linspace(-1., 1., w).reshape(1, w).repeat(h, 1).unsqueeze(-1)
     meshgrid = torch.cat((y_t, x_t), dim=-1).to(device) # 64 x 64 x 2
 
-    mu = contract('ijl, akij -> akl', meshgrid, part_maps) # 1 x 20 x 2
+    mu = contract('ijl, akij -> akl', meshgrid, part_maps) # bn x nk x 2
     mu_out_prod = contract('akm,akn->akmn', mu, mu)
 
     mesh_out_prod = contract('ijm,ijn->ijmn', meshgrid, meshgrid)
@@ -59,7 +59,6 @@ def get_mu_and_prec(part_maps, device, scal):
     det = (a * c).unsqueeze(-1).unsqueeze(-1)
     row_1 = torch.cat((c.unsqueeze(-1), z.unsqueeze(-1)), dim=-1).unsqueeze(-2)
     row_2 = torch.cat((-b.unsqueeze(-1), a.unsqueeze(-1)), dim=-1).unsqueeze(-2)
-
     L_inv = scal / (det + eps) * torch.cat((row_1, row_2), dim=-2)  # L^⁻1 = 1/(ac)* [[c, 0], [-b, a]
     return mu, L_inv
 
@@ -205,8 +204,6 @@ def total_loss(input, reconstr, sig_shape, sig_app, mu, coord, vector,
     distance_metric = torch.abs(input - reconstr)
     fold_img_squared, heat_mask_l2 = fold_img_with_mu(distance_metric, mu, l_2_scal, l_2_threshold, device)
     rec_loss = torch.mean(torch.sum(torch.sum(fold_img_squared.reshape(bn, k, -1), dim=2), dim=1))
-    # rec_loss = nn.BCELoss()(reconstr, input)
-    # rec_loss = nn.L1Loss()(reconstr, input)
     total_loss = rec_loss + equiv_loss
     return total_loss
 

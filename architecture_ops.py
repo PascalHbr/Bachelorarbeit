@@ -4,11 +4,8 @@ import torch.nn.functional as F
 
 
 def softmax(logit_map):
-    eps = 1e-12
-    exp = torch.exp(logit_map - torch.max(logit_map.view(logit_map.size(0), logit_map.size(1), -1), dim=2)[0].unsqueeze(-1).unsqueeze(-1))
-    norm = torch.sum(exp, dim=[1, 2], keepdim=True) + eps
-    softmax = exp / norm
-    return softmax
+    map_norm = F.softmax(logit_map.reshape(logit_map.size(0), logit_map.size(1), -1), dim=2).view_as(logit_map)
+    return map_norm
 
 
 class Conv(nn.Module):
@@ -128,15 +125,15 @@ class E(nn.Module):
         out = self.dropout(out)
         out = self.out(out)
         # Get Normalized Feature Maps for E_sigma
-        map = self.feature(out)
+        feature_map = self.feature(out)
         if self.sigma:
-            map_normalized = F.softmax(map.reshape(map.size(0), map.size(1), -1), dim=2).view_as(map)
+            map_normalized = softmax(feature_map)
             map_transformed = self.map_transform(map_normalized)
             #stack = torch.cat((map_transformed, x), dim=1) # Try for concatenate instead of sum
             stack = map_transformed + x
-            return map_normalized, stack
+            return feature_map, map_normalized, stack
         else:
-            return map
+            return feature_map
 
 
 class Nccuc(nn.Module):

@@ -1,7 +1,7 @@
 import torch
 from DataLoader import ImageDataset, ImageDataset2, DataLoader
 from utils import save_model, load_model, convert_image_np, batch_colour_map, load_images_from_folder, plot_tensor, \
-                  save, save_heat_map
+                  save, save_heat_map, make_visualization
 from Model import Model, Model2
 from config import parse_args, write_hyperparameters
 from dotmap import DotMap
@@ -12,8 +12,6 @@ from torchvision import transforms
 from transformations import tps_parameters, make_input_tps_param, ThinPlateSpline
 import kornia.augmentation as K
 import matplotlib.pyplot as plt
-# from Tests import ThinPlateSpline1
-# import tensorflow as tf
 
 
 def main2(arg):
@@ -118,11 +116,7 @@ def main(arg):
         model_save_dir = '../results/' + name
         if not os.path.exists(model_save_dir):
             os.makedirs(model_save_dir)
-            os.makedirs(model_save_dir + '/image')
-            os.makedirs(model_save_dir + '/reconstruction')
-            os.makedirs(model_save_dir + '/mu')
-            os.makedirs(model_save_dir + '/parts')
-            os.makedirs(model_save_dir + '/heat_map')
+            os.makedirs(model_save_dir + '/summary')
 
         # Save Hyperparameters
         write_hyperparameters(arg.toDict(), model_save_dir)
@@ -148,25 +142,32 @@ def main(arg):
             model.train()
             model.mode = 'train'
             for step, original in enumerate(train_loader):
-                original = original.to(device)
-                # Make transformations
-                tps_param_dic = tps_parameters(original.shape[0], arg.scal, arg.tps_scal, arg.rot_scal,
-                                               arg.off_scal, arg.scal_var, arg.augm_scal)
-                coord, vector = make_input_tps_param(tps_param_dic)
-                coord, vector = coord.to(device), vector.to(device)
-                image_spatial_t, _ = ThinPlateSpline(original, coord, vector,
-                                                     original.shape[3], device)
-                image_appearance_t = K.ColorJitter(arg.brightness, arg.contrast, arg.saturation, arg.hue)(original)
-                # Zero out gradients
-                optimizer.zero_grad()
-                prediction, loss = model(original, image_spatial_t, image_appearance_t, coord, vector)
-                loss.backward()
-                optimizer.step()
-                if step == 0:
-                    loss_log = torch.tensor([loss])
-                else:
-                    loss_log = torch.cat([loss_log, torch.tensor([loss])])
-            print(f'Epoch: {epoch}, Train Loss: {torch.mean(loss_log)}')
+                with torch.autograd.set_detect_anomaly(True):
+                    original = original.to(device)
+                    # Make transformations
+                    tps_param_dic = tps_parameters(original.shape[0], arg.scal, arg.tps_scal, arg.rot_scal,
+                                                   arg.off_scal, arg.scal_var, arg.augm_scal)
+                    coord, vector = make_input_tps_param(tps_param_dic)
+                    coord, vector = coord.to(device), vector.to(device)
+                    image_spatial_t, _ = ThinPlateSpline(original, coord, vector,
+                                                         original.shape[3], device)
+                    image_appearance_t = K.ColorJitter(arg.brightness, arg.contrast, arg.saturation, arg.hue)(original)
+                    # Initial Track of Images
+                    if epoch == 0 and step == 0:
+                        for i, (orig, img_spat, img_app) in enumerate(zip(original, image_spatial_t, image_appearance_t)):
+                            save_image(orig, model_save_dir + '/initial/' + str(i) + '_original.png')
+                            save_image(img_spat, model_save_dir + '/initial/' + str(i) + '_spat.png')
+                            save_image(img_app, model_save_dir + '/initial/' + str(i) + '_app.png')
+                    # Zero out gradients
+                    optimizer.zero_grad()
+                    prediction, loss = model(original, image_spatial_t, image_appearance_t, coord, vector)
+                    loss.backward()
+                    optimizer.step()
+                    if step == 0:
+                        loss_log = torch.tensor([loss])
+                    else:
+                        loss_log = torch.cat([loss_log, torch.tensor([loss])])
+                print(f'Epoch: {epoch}, Train Loss: {torch.mean(loss_log)}')
 
             # Evaluate on Test Set
             model.eval()
@@ -188,18 +189,12 @@ def main(arg):
             print(f'Epoch: {epoch}, Test Loss: {torch.mean(loss)}')
 
             # Track Progress
-            if epoch % 5 == 0:
+            if True:
                 model.mode = 'predict'
-                image, reconstruction, mu, shape_stream_parts, heat_map = model(original, image_spatial_t,
-                                                                      image_appearance_t, coord, vector)
-                for i in range(len(image)):
-                    if epoch == 0:
-                        save_image(image[i], model_save_dir + '/image/' + str(i) + '_' + str(epoch) + '.png')
-                    save_image(reconstruction[i], model_save_dir + '/reconstruction/' + str(i) + '_' + str(epoch) + '.png')
-                    # save_image(shape_stream_parts[0][0],
-                    #            model_save_dir + '/parts/' + str(i) + '_' + str(epoch) + '.png')
-                    # save_image(heat_map[0][0],
-                    #            model_save_dir + '/heat_map/' + str(i) + '_' + str(epoch) + '.png')
+                original, fmap_shape, fmap_app, reconstruction = model(original, image_spatial_t,
+                                                                       image_appearance_t, coord, vector)
+                make_visualization(original, reconstruction, image_spatial_t, image_appearance_t,
+                                   fmap_shape, fmap_app, model_save_dir, epoch)
                 save_model(model, model_save_dir)
 
     elif mode == 'predict':
@@ -224,38 +219,17 @@ def main(arg):
                                                arg.scal_var, arg.augm_scal)
                 coord, vector = make_input_tps_param(tps_param_dic)
                 coord, vector = coord.to(device), vector.to(device)
-                # tf_coord, tf_vector = tf.convert_to_tensor(coord.cpu().detach().numpy()), tf.convert_to_tensor(vector.cpu().detach().numpy())
-                # np_tensor = original.permute(0, 2, 3, 1).cpu().detach().numpy()
-                # tf_tensor = tf.convert_to_tensor(np_tensor)
-                # image_spatial_t, _ = ThinPlateSpline1(tf_tensor, tf_coord, tf_vector,
-                #                                      256, 3)
-                # image_spatial_t = torch.tensor(image_spatial_t.numpy()).permute(0, 3, 1, 2).to(device)
                 image_spatial_t, _ = ThinPlateSpline(original, coord, vector,
                                                      original.shape[3], device)
                 image_appearance_t = K.ColorJitter(arg.brightness, arg.contrast, arg.saturation, arg.hue)(original)
-                # image_spatial_t, image_appearance_t = transforms.ToTensor()(image_spatial_t.numpy()), \
-                #                                       transforms.ToTensor()(image_appearance_t.numpy())
                 image, reconstruction, mu, shape_stream_parts, heat_map = model(original, image_spatial_t,
                                                                                 image_appearance_t, coord, vector)
                 save_image(image[0], model_save_dir + '/predictions/original.png')
                 save_image(reconstruction[0], model_save_dir + '/predictions/reconstruction.png')
-                save_image(image_spatial_t[0], model_save_dir + '/predictions/spatial_transform.png')
-                save_image(image_appearance_t[0], model_save_dir + '/predictions/appearance_transform.png')
-                plot_tensor(original[0])
-                plt.show()
-                plot_tensor(image_spatial_t[0])
-                plt.show()
-                plot_tensor(image_appearance_t[0])
-                plt.show()
-                print(torch.max(image_spatial_t[0][0]), torch.min(image_spatial_t[0][0]))
-                print(torch.max(image_spatial_t[0][1]), torch.min(image_spatial_t[0][1]))
-                print(torch.max(image_spatial_t[0][2]), torch.min(image_spatial_t[0][2]))
-                #print(mu[0][0], mu[0][1], mu[0][2], mu[0][3])
-                save_heat_map(heat_map[0], model_save_dir)
-                # for i in range(len(image)):
-                #     save_image(image[i], model_save_dir + '/predictions/original' + str(i) + '.png')
-                #     save_image(reconstruction[i],
-                #                model_save_dir + '/predictions/reconstruction' + str(i) + '.png')
+                save_image(image_spatial_t[0], model_save_dir + '/predictions/spat0.png')
+                save_image(image_spatial_t[1], model_save_dir + '/predictions/spat1.png')
+                save_image(image_spatial_t[2], model_save_dir + '/predictions/spat2.png')
+                save_image(image_spatial_t[3], model_save_dir + '/predictions/spat3.png')
 
 if __name__ == '__main__':
     arg = DotMap(vars(parse_args()))

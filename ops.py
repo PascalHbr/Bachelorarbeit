@@ -4,6 +4,7 @@ from transformations import ThinPlateSpline
 import kornia.augmentation as K
 import torch.nn.functional as F
 from opt_einsum import contract
+from architecture_ops import softmax
 
 
 def get_local_part_appearances(f, sig):
@@ -49,13 +50,12 @@ def get_mu_and_prec(part_maps, device, scal):
     a_sq = stddev[:, :, 0, 0]
     a_b = stddev[:, :, 0, 1]
     b_sq_add_c_sq = stddev[:, :, 1, 1]
-    eps = 1e-12
+    eps = 1e-6
 
-    a = torch.sqrt(a_sq + eps)  # Σ = L L^T Prec = Σ^-1  = L^T^-1 * L^-1  ->looking for L^-1 but first L = [[a, 0], [b, c]
+    a = torch.sqrt(torch.abs(a_sq) + eps)  # Σ = L L^T Prec = Σ^-1  = L^T^-1 * L^-1  ->looking for L^-1 but first L = [[a, 0], [b, c]
     b = a_b / (a + eps)
     c = torch.sqrt(b_sq_add_c_sq - b ** 2 + eps)
     z = torch.zeros_like(a)
-
     det = (a * c).unsqueeze(-1).unsqueeze(-1)
     row_1 = torch.cat((c.unsqueeze(-1), z.unsqueeze(-1)), dim=-1).unsqueeze(-2)
     row_2 = torch.cat((-b.unsqueeze(-1), a.unsqueeze(-1)), dim=-1).unsqueeze(-2)
@@ -188,14 +188,15 @@ def feat_mu_to_enc(features, mu, L_inv, device, covariance, reconstr_dim, static
     return encoding_list
 
 
-def total_loss(input, reconstr, sig_shape, sig_app, mu, coord, vector,
+def total_loss(input, reconstr, sig_shape_raw, sig_app, mu, coord, vector,
                device, L_mu, L_cov, scal, l_2_scal, l_2_threshold):
-    bn, k, h, w = sig_shape.shape
+    bn, k, h, w = sig_shape_raw.shape
     # Equiv Loss
-    sig_shape_trans, _ = ThinPlateSpline(sig_shape, coord, vector, h, device=device)
+    sig_shape_trans, _ = ThinPlateSpline(sig_shape_raw, coord, vector, h, device=device)
+    sig_shape = softmax(sig_shape_trans)
     mu_1, L_inv1 = get_mu_and_prec(sig_app, device, scal)
     #cov_1 = get_covariance(sig_app)
-    mu_2, L_inv2 = get_mu_and_prec(sig_shape_trans, device, scal)
+    mu_2, L_inv2 = get_mu_and_prec(sig_shape, device, scal)
     #cov_2 = get_covariance(sig_shape_trans)
     equiv_loss = torch.mean(torch.sum(L_mu * torch.norm(mu_1 - mu_2, p=2, dim=2) + \
                            L_cov * torch.norm(L_inv1 - L_inv2, p=1, dim=[2, 3]), dim=1))
@@ -277,8 +278,8 @@ def AbsDetJacobian(batch_meshgrid, device):
 
 
 def heat_map_function(y_dist, x_dist, y_scale, x_scale):
-    x = 1 / (1 + (torch.square(y_dist / (1e-6 + y_scale)) + torch.square(
-        x_dist / (1e-6 + x_scale))))
+    x = 1 / (1 + (torch.square((torch.abs(y_dist) + 1e-6) / y_scale) + torch.square(
+        (torch.abs(x_dist) + 1e-6) / x_scale)))
     return x
 
 
@@ -312,11 +313,22 @@ def fold_img_with_mu(img, mu, scale, threshold, device, normalize=True):
     heat_scal = torch.clamp(heat_scal, min=0., max=1.)
     heat_scal = torch.where(heat_scal > threshold, heat_scal, torch.zeros_like(heat_scal))
 
+    eps = 1e-6
     norm = torch.sum(heat_scal.reshape(bn, -1), dim=1).unsqueeze(1).unsqueeze(1)
     if normalize:
-        heat_scal_norm = heat_scal / norm
+        heat_scal_norm = heat_scal / (norm + eps)
         folded_img = contract('bcij,bij->bcij', img, heat_scal_norm)
     if not normalize:
         folded_img = contract('bcij,bij->bcij', img, heat_scal)
 
     return folded_img, heat_scal.unsqueeze(-1)
+
+
+def normalize(image):
+    bn, kn, h, w = image.shape
+    image = image.view(bn, kn, -1)
+    image -= image.min(2, keepdim=True)[0]
+    image /= image.max(2, keepdim=True)[0]
+    image = image.view(bn, kn, h, w)
+
+    return image

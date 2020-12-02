@@ -19,7 +19,7 @@ def parse_args():
     parser.add_argument('--reconstr_dim', default=256, type=int, help="dimension of reconstruction")
 
     # modes
-    parser.add_argument('--bn', default=12, type=int,  help="batchsize if not slim and 2 * batchsize if slim")
+    parser.add_argument('--bn', default=10, type=int,  help="batchsize if not slim and 2 * batchsize if slim")
     parser.add_argument('--n_parts', default=16, type=int, help="number of parts")
     parser.add_argument('--n_features', default=64, type=int,  help="neurons of feature map layer")
     parser.add_argument('--n_c', default=3, type=int)
@@ -39,7 +39,7 @@ def parse_args():
     parser.add_argument('--L_inv_scal', default=5.0, type=float, help="")
     parser.add_argument('--scal', default=1.0, type=float, nargs='+', help="default 0.6 sensible schedule [0.6, 0.6]")
     parser.add_argument('--tps_scal', default=0.05, type=float, nargs='+', help="sensible schedule [0.01, 0.08]")
-    parser.add_argument('--rot_scal', default=0.2, type=float, nargs='+', help="sensible schedule [0.05, 0.6]")
+    parser.add_argument('--rot_scal', default=0.4, type=float, nargs='+', help="sensible schedule [0.05, 0.6]")
     parser.add_argument('--off_scal', default=0.15, type=float, nargs='+', help="sensible schedule [0.05, 0.15]")
     parser.add_argument('--scal_var', default=0.05, type=float, nargs='+', help="sensible schedule [0.05, 0.2]")
     parser.add_argument('--augm_scal', default=1., type=float, nargs='+', help="sensible schedule [0.0, 1.]")

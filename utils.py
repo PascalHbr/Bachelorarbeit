@@ -105,49 +105,48 @@ def load_model(model, model_save_dir):
     return model
 
 
-def load_images_from_folder(stop=False):
-    folder = "/export/scratch2/compvis_datasets/deepfashion_vunet/train/"
+def load_images_from_folder():
+    folder = "/export/scratch/compvis/datasets/deepfashion_vunet/train"
     images = []
     for i, filename in enumerate(os.listdir(folder)):
         img = plt.imread(os.path.join(folder, filename))
         if img is not None:
             images.append(img)
-        if stop == True:
-            if i == 3:
-                break
+        if i == 100:
+            break
     return images
 
-def make_visualization(original, reconstruction, shape_transform, app_transform, fmap_shape, fmap_app, directory, epoch,
-                       index=3):
+
+def make_visualization(original, reconstruction, shape_transform, app_transform, fmap_shape,
+                       fmap_app, directory, epoch, device, index=3):
     # Color List for Parts
     color_list = ['black', 'gray', 'brown', 'chocolate', 'orange', 'gold', 'olive', 'lawngreen', 'aquamarine',
                   'dodgerblue', 'midnightblue', 'mediumpurple', 'indigo', 'magenta', 'pink', 'springgreen']
-
     # Get Maps
     fmap_shape_norm = softmax(fmap_shape)
-    mu_shape, L_inv_shape = get_mu_and_prec(fmap_shape_norm, 'cpu', scal=5.)
-    heat_map_shape = get_heat_map(mu_shape, L_inv_shape, "cpu")
+    mu_shape, L_inv_shape = get_mu_and_prec(fmap_shape_norm, device, scal=5.)
+    heat_map_shape = get_heat_map(mu_shape, L_inv_shape, device)
 
     fmap_app_norm = softmax(fmap_app)
-    mu_app, L_inv_app = get_mu_and_prec(fmap_app_norm, 'cpu', scal=5.)
-    heat_map_app = get_heat_map(mu_app, L_inv_app, "cpu")
+    mu_app, L_inv_app = get_mu_and_prec(fmap_app_norm, device, scal=5.)
+    heat_map_app = get_heat_map(mu_app, L_inv_app, device)
 
     with PdfPages(directory + '/summary/' + str(epoch) + '_summary.pdf') as pdf:
         # Make Head with Overview
         fig_head, axs_head = plt.subplots(3, 4, figsize=(12, 12))
         fig_head.suptitle("Overview", fontsize="x-large")
-        axs_head[0, 0].imshow(original[index].permute(1, 2, 0).numpy())
-        axs_head[0, 1].imshow(app_transform[index].permute(1, 2, 0).numpy())
-        axs_head[0, 2].imshow(shape_transform[index].permute(1, 2, 0).numpy())
-        axs_head[0, 3].imshow(reconstruction[index].permute(1, 2, 0).numpy())
+        axs_head[0, 0].imshow(original[index].permute(1, 2, 0).cpu().detach().numpy())
+        axs_head[0, 1].imshow(app_transform[index].permute(1, 2, 0).cpu().detach().numpy())
+        axs_head[0, 2].imshow(shape_transform[index].permute(1, 2, 0).cpu().detach().numpy())
+        axs_head[0, 3].imshow(reconstruction[index].permute(1, 2, 0).cpu().detach().numpy())
 
-        axs_head[1, 0].imshow(app_transform[index].permute(1, 2, 0).numpy())
-        axs_head[1, 2].imshow(shape_transform[index].permute(1, 2, 0).numpy())
+        axs_head[1, 0].imshow(app_transform[index].permute(1, 2, 0).cpu().detach().numpy())
+        axs_head[1, 2].imshow(shape_transform[index].permute(1, 2, 0).cpu().detach().numpy())
 
-        axs_head[2, 0].imshow(reconstruction[0].permute(1, 2, 0).numpy())
-        axs_head[2, 1].imshow(reconstruction[1].permute(1, 2, 0).numpy())
-        axs_head[2, 2].imshow(reconstruction[2].permute(1, 2, 0).numpy())
-        axs_head[2, 3].imshow(reconstruction[3].permute(1, 2, 0).numpy())
+        axs_head[2, 0].imshow(reconstruction[0].permute(1, 2, 0).cpu().detach().numpy())
+        axs_head[2, 1].imshow(reconstruction[1].permute(1, 2, 0).cpu().detach().numpy())
+        axs_head[2, 2].imshow(reconstruction[2].permute(1, 2, 0).cpu().detach().numpy())
+        axs_head[2, 3].imshow(reconstruction[3].permute(1, 2, 0).cpu().detach().numpy())
 
         # Part Visualization Shape Stream
         fig_shape, axs_shape = plt.subplots(8, 6, figsize=(8, 8))
@@ -161,15 +160,15 @@ def make_visualization(original, reconstruction, shape_transform, app_transform,
             else:
                 overlay_shape += heat_map_shape[index][i]
 
-            axs_shape[int(i / 2), (i % 2) * 3].imshow(fmap_shape[index][i].numpy(), cmap=cmap)
-            axs_shape[int(i / 2), (i % 2) * 3 + 1].imshow(fmap_shape_norm[index][i].numpy(), cmap=cmap)
-            axs_shape[int(i / 2), (i % 2) * 3 + 2].imshow(heat_map_shape[index][i].numpy(), cmap=cmap)
+            axs_shape[int(i / 2), (i % 2) * 3].imshow(fmap_shape[index][i].cpu().detach().numpy(), cmap=cmap)
+            axs_shape[int(i / 2), (i % 2) * 3 + 1].imshow(fmap_shape_norm[index][i].cpu().detach().numpy(), cmap=cmap)
+            axs_shape[int(i / 2), (i % 2) * 3 + 2].imshow(heat_map_shape[index][i].cpu().detach().numpy(), cmap=cmap)
 
             if i == 15:
                 cmap = colors.LinearSegmentedColormap.from_list('my_colormap',
                                                                 ['white', 'black'],
                                                                 256)
-                axs_head[1, 1].imshow(overlay_shape.numpy(), cmap=cmap)
+                axs_head[1, 1].imshow(overlay_shape.cpu().detach().numpy(), cmap=cmap)
 
         # Part Visualization Appearance Stream
         fig_app, axs_app = plt.subplots(8, 6, figsize=(8, 8))
@@ -183,16 +182,18 @@ def make_visualization(original, reconstruction, shape_transform, app_transform,
             else:
                 overlay_app += heat_map_app[index][i]
 
-            axs_app[int(i / 2), (i % 2) * 3].imshow(fmap_app[index][i].numpy(), cmap=cmap)
-            axs_app[int(i / 2), (i % 2) * 3 + 1].imshow(fmap_app_norm[index][i].numpy(), cmap=cmap)
-            axs_app[int(i / 2), (i % 2) * 3 + 2].imshow(heat_map_app[index][i].numpy(), cmap=cmap)
+            axs_app[int(i / 2), (i % 2) * 3].imshow(fmap_app[index][i].cpu().detach().numpy(), cmap=cmap)
+            axs_app[int(i / 2), (i % 2) * 3 + 1].imshow(fmap_app_norm[index][i].cpu().detach().numpy(), cmap=cmap)
+            axs_app[int(i / 2), (i % 2) * 3 + 2].imshow(heat_map_app[index][i].cpu().detach().numpy(), cmap=cmap)
 
             if i == 15:
                 cmap = colors.LinearSegmentedColormap.from_list('my_colormap',
                                                                 ['white', 'black'],
                                                                 256)
-                axs_head[1, 3].imshow(overlay_app.numpy(), cmap=cmap)
+                axs_head[1, 3].imshow(overlay_app.cpu().detach().numpy(), cmap=cmap)
 
         pdf.savefig(fig_head)
         pdf.savefig(fig_shape)
         pdf.savefig(fig_app)
+
+        plt.close('all')

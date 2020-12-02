@@ -4,7 +4,7 @@ import torch.nn.functional as F
 
 
 def softmax(logit_map):
-    map_norm = F.softmax(logit_map.reshape(logit_map.size(0), logit_map.size(1), -1), dim=2).view_as(logit_map)
+    map_norm = nn.Softmax(dim=2)(logit_map.reshape(logit_map.size(0), logit_map.size(1), -1)).view_as(logit_map)
     return map_norm
 
 
@@ -16,7 +16,7 @@ class Conv(nn.Module):
         self.relu = None
         self.bn = None
         if relu:
-            self.relu = nn.ReLU()
+            self.relu = nn.LeakyReLU()
         if bn:
             self.bn = nn.BatchNorm2d(out_dim)
 
@@ -32,7 +32,7 @@ class Conv(nn.Module):
 class Residual(nn.Module):
     def __init__(self, inp_dim, out_dim):
         super(Residual, self).__init__()
-        self.relu = nn.ReLU()
+        self.relu = nn.LeakyReLU()
         self.bn1 = nn.BatchNorm2d(inp_dim)
         self.conv1 = Conv(inp_dim, int(out_dim / 2), 1, relu=False)
         self.bn2 = nn.BatchNorm2d(int(out_dim / 2))
@@ -144,7 +144,7 @@ class Nccuc(nn.Module):
         self.down_Conv = Conv(inp_dim=in_channels, out_dim=filters[0], kernel_size=3, stride=1, bn=True, relu=True)
         self.up_Conv = nn.ConvTranspose2d(in_channels=filters[0], out_channels=filters[1], kernel_size=4, stride=2,
                                           padding=1)
-        self.relu = nn.ReLU()
+        self.relu = nn.LeakyReLU()
 
     def forward(self, input_A, input_B):
         down_conv = self.down_Conv(input_A)

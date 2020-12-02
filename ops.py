@@ -1,8 +1,6 @@
 import torch
 import torch.nn as nn
 from transformations import ThinPlateSpline
-import kornia.augmentation as K
-import torch.nn.functional as F
 from opt_einsum import contract
 from architecture_ops import softmax
 
@@ -10,24 +8,6 @@ from architecture_ops import softmax
 def get_local_part_appearances(f, sig):
     alpha = contract('bfij, bkij -> bkf', f, sig)
     return alpha
-
-
-def get_covariance(tensor):
-    bn, nk, w, h = tensor.shape
-    tensor_reshape = tensor.reshape(bn, nk, 2, -1)
-    x = tensor_reshape[:, :, 0, :]
-    y = tensor_reshape[:, :, 1, :]
-    mean_x = torch.mean(x, dim=2).unsqueeze(-1)
-    mean_y = torch.mean(y, dim=2).unsqueeze(-1)
-
-    xx = torch.sum((x - mean_x) * (x - mean_x), dim=2).unsqueeze(-1) / (h * w / 2 - 1)
-    xy = torch.sum((x - mean_x) * (y - mean_y), dim=2).unsqueeze(-1) / (h * w / 2 - 1)
-    yx = xy
-    yy = torch.sum((y - mean_y) * (y - mean_y), dim=2).unsqueeze(-1) / (h * w / 2 - 1)
-
-    cov = torch.cat((xx, xy, yx, yy), dim=2)
-    cov = cov.reshape(bn, nk, 2, 2)
-    return cov
 
 
 def get_mu_and_prec(part_maps, device, scal):
@@ -42,20 +22,21 @@ def get_mu_and_prec(part_maps, device, scal):
     meshgrid = torch.cat((y_t, x_t), dim=-1).to(device) # 64 x 64 x 2
 
     mu = contract('ijl, akij -> akl', meshgrid, part_maps) # bn x nk x 2
-    mu_out_prod = contract('akm,akn->akmn', mu, mu)
+    mu_out_prod = contract('akm, akn -> akmn', mu, mu)
 
-    mesh_out_prod = contract('ijm,ijn->ijmn', meshgrid, meshgrid)
-    stddev = contract('ijmn,akij->akmn', mesh_out_prod, part_maps) - mu_out_prod
+    mesh_out_prod = contract('ijm, ijn -> ijmn', meshgrid, meshgrid)
+    stddev = contract('ijmn, akij -> akmn', mesh_out_prod, part_maps) - mu_out_prod
 
     a_sq = stddev[:, :, 0, 0]
     a_b = stddev[:, :, 0, 1]
     b_sq_add_c_sq = stddev[:, :, 1, 1]
-    eps = 1e-6
+    eps = 1e-12
 
-    a = torch.sqrt(torch.abs(a_sq) + eps)  # Σ = L L^T Prec = Σ^-1  = L^T^-1 * L^-1  ->looking for L^-1 but first L = [[a, 0], [b, c]
+    a = torch.sqrt(a_sq + eps)  # Σ = L L^T Prec = Σ^-1  = L^T^-1 * L^-1  ->looking for L^-1 but first L = [[a, 0], [b, c]
     b = a_b / (a + eps)
     c = torch.sqrt(b_sq_add_c_sq - b ** 2 + eps)
     z = torch.zeros_like(a)
+
     det = (a * c).unsqueeze(-1).unsqueeze(-1)
     row_1 = torch.cat((c.unsqueeze(-1), z.unsqueeze(-1)), dim=-1).unsqueeze(-2)
     row_2 = torch.cat((-b.unsqueeze(-1), a.unsqueeze(-1)), dim=-1).unsqueeze(-2)
@@ -189,7 +170,7 @@ def feat_mu_to_enc(features, mu, L_inv, device, covariance, reconstr_dim, static
 
 
 def total_loss(input, reconstr, sig_shape_raw, sig_app, mu, coord, vector,
-               device, L_mu, L_cov, scal, l_2_scal, l_2_threshold):
+               device, L_mu, L_cov, scal, l_2_scal, l_2_threshold, loss_whole):
     bn, k, h, w = sig_shape_raw.shape
     # Equiv Loss
     sig_shape_trans, _ = ThinPlateSpline(sig_shape_raw, coord, vector, h, device=device)
@@ -202,84 +183,18 @@ def total_loss(input, reconstr, sig_shape_raw, sig_app, mu, coord, vector,
                            L_cov * torch.norm(L_inv1 - L_inv2, p=1, dim=[2, 3]), dim=1))
 
     # Rec Loss
-    distance_metric = torch.abs(input - reconstr)
-    fold_img_squared, heat_mask_l2 = fold_img_with_mu(distance_metric, mu, l_2_scal, l_2_threshold, device)
-    rec_loss = torch.mean(torch.sum(torch.sum(fold_img_squared.reshape(bn, k, -1), dim=2), dim=1))
+    if loss_whole:
+        rec_loss = nn.L1Loss()(reconstr, input)
+    else:
+        distance_metric = torch.abs(input - reconstr)
+        fold_img_squared, heat_mask_l2 = fold_img_with_mu(distance_metric, mu, l_2_scal, l_2_threshold, device)
+        rec_loss = torch.mean(torch.sum(torch.sum(fold_img_squared.reshape(bn, k, -1), dim=2), dim=1))
     total_loss = rec_loss + equiv_loss
     return total_loss
 
 
-def count_parameters(model):
-    return sum(p.numel() for p in model.parameters() if p.requires_grad)
-
-
-def augm(t, arg):
-    t = K.ColorJitter(arg.brightness_var, arg.contrast_var, arg.saturation_var, arg.hue_var)(t)
-    random_tensor = 1. - arg.p_flip + torch.rand(size=[1], dtype=t.dtype)
-    binary_tensor = torch.floor(random_tensor)
-    random_tensor, binary_tensor = random_tensor.to(arg.device), binary_tensor.to(arg.device)
-
-    augmented = binary_tensor * t + (1 - binary_tensor) * (1 - t)
-    return augmented
-
-
-def prepare_pairs(t_images, arg, reconstr_dim=128):
-    if arg.mode == 'train':
-        bn, n_c, w, h = t_images.shape
-        t_c_1_images = augm(t_images, arg)
-        t_c_2_images = augm(t_images, arg)
-
-        if arg.static:
-            t_c_1_images = torch.cat([t_c_1_images[:bn//2].unsqueeze(1), t_c_1_images[bn//2:].unsqueeze(1)], dim=1)
-            t_c_2_images = torch.cat([t_c_2_images[:bn//2].unsqueeze(1), t_c_2_images[bn//2:].unsqueeze(1)], dim=1)
-        else:
-            t_c_1_images = t_c_1_images.reshape(bn // 2, 2, n_c, h, w)
-            t_c_2_images = t_c_2_images.reshape(bn // 2, 2, n_c, h, w)
-
-        a, b = t_c_1_images[:, 0].unsqueeze(1), t_c_1_images[:, 1].unsqueeze(1)
-        c, d = t_c_2_images[:, 0].unsqueeze(1), t_c_2_images[:, 1].unsqueeze(1)
-
-        if arg.static:
-            t_input_images = torch.cat([a, d], dim=0).reshape(bn, n_c, w, h)
-            t_reconst_images = torch.cat([c, b], dim=0).reshape(bn, n_c, w, h)
-        else:
-            t_input_images = torch.cat([a, d], dim=1).reshape(bn, n_c, w, h)
-            t_reconst_images = torch.cat([c, b], dim=1).reshape(bn, n_c, w, h)
-
-        t_input_images = torch.clamp(t_input_images, min=0., max=1.)
-        t_reconst_images = F.interpolate(torch.clamp(t_reconst_images, min=0., max=1.), size=reconstr_dim)
-
-    else:
-        t_input_images = torch.clamp(t_images, min=0., max=1.)
-        t_reconst_images = F.interpolate(torch.clamp(t_images, min=0., max=1.), size=reconstr_dim)
-
-    return t_input_images, t_reconst_images
-
-
-def AbsDetJacobian(batch_meshgrid, device):
-    """
-        :param batch_meshgrid: takes meshgrid tensor of dim [bn, 2, h, w] (conceptually meshgrid represents a two dimensional function f = [fx, fy] on [bn, h, w] )
-        :return: returns Abs det of  Jacobian of f of dim [bn, 1, h, w]
-        """
-    y_c = batch_meshgrid[:, 0, :, :].unsqueeze(1)
-    x_c = batch_meshgrid[:, 1, :, :].unsqueeze(1)
-    sobel_x_filter = 1 / 4 * torch.tensor([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]], dtype=torch.float).reshape(1, 1, 3, 3).cuda()
-    sobel_y_filter = sobel_x_filter.permute(0, 1, 3, 2).cuda()
-
-
-    filtered_y_y = F.conv2d(y_c, sobel_y_filter, stride=1, padding=1)
-    filtered_y_x = F.conv2d(y_c, sobel_x_filter, stride=1, padding=1)
-    filtered_x_y = F.conv2d(x_c, sobel_y_filter, stride=1, padding=1)
-    filtered_x_x = F.conv2d(x_c, sobel_x_filter, stride=1, padding=1)
-
-    Det = torch.abs(filtered_y_y * filtered_x_x - filtered_y_x * filtered_x_y)
-
-    return Det
-
-
 def heat_map_function(y_dist, x_dist, y_scale, x_scale):
-    x = 1 / (1 + (torch.square((torch.abs(y_dist) + 1e-6) / y_scale) + torch.square(
-        (torch.abs(x_dist) + 1e-6) / x_scale)))
+    x = 1 / (1 + (torch.square(y_dist / (1e-6 + y_scale)) + torch.square(x_dist / (1e-6 + x_scale))))
     return x
 
 
@@ -314,9 +229,9 @@ def fold_img_with_mu(img, mu, scale, threshold, device, normalize=True):
     heat_scal = torch.where(heat_scal > threshold, heat_scal, torch.zeros_like(heat_scal))
 
     eps = 1e-6
-    norm = torch.sum(heat_scal.reshape(bn, -1), dim=1).unsqueeze(1).unsqueeze(1)
+    norm = torch.sum(heat_scal.reshape(bn, -1), dim=1).unsqueeze(1).unsqueeze(1) + eps
     if normalize:
-        heat_scal_norm = heat_scal / (norm + eps)
+        heat_scal_norm = heat_scal / norm
         folded_img = contract('bcij,bij->bcij', img, heat_scal_norm)
     if not normalize:
         folded_img = contract('bcij,bij->bcij', img, heat_scal)
@@ -330,5 +245,4 @@ def normalize(image):
     image -= image.min(2, keepdim=True)[0]
     image /= image.max(2, keepdim=True)[0]
     image = image.view(bn, kn, h, w)
-
     return image

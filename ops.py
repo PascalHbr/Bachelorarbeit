@@ -21,7 +21,7 @@ def get_mu_and_prec(part_maps, device, scal):
     x_t = torch.linspace(-1., 1., w).reshape(1, w).repeat(h, 1).unsqueeze(-1)
     meshgrid = torch.cat((y_t, x_t), dim=-1).to(device) # 64 x 64 x 2
 
-    mu = contract('ijl, akij -> akl', meshgrid, part_maps) # bn x nk x 2
+    mu = contract('akij, ijl -> akl', part_maps, meshgrid) # bn x nk x 2
     mu_out_prod = contract('akm, akn -> akmn', mu, mu)
 
     mesh_out_prod = contract('ijm, ijn -> ijmn', meshgrid, meshgrid)
@@ -180,7 +180,7 @@ def total_loss(input, reconstr, sig_shape_raw, sig_app, mu, coord, vector,
     mu_2, L_inv2 = get_mu_and_prec(sig_shape, device, scal)
     #cov_2 = get_covariance(sig_shape_trans)
     equiv_loss = torch.mean(torch.sum(L_mu * torch.norm(mu_1 - mu_2, p=2, dim=2) + \
-                           L_cov * torch.norm(L_inv1 - L_inv2, p=1, dim=[2, 3]), dim=1))
+                            L_cov * torch.norm(L_inv1 - L_inv2, p=1, dim=[2, 3]), dim=1))
 
     # Rec Loss
     if loss_whole:
@@ -219,8 +219,9 @@ def fold_img_with_mu(img, mu, scale, threshold, device, normalize=True):
     x_t_flat = x_t.reshape(1, 1, -1).to(device)
     y_t_flat = y_t.reshape(1, 1, -1).to(device)
 
-    y_dist = py - y_t_flat
-    x_dist = px - x_t_flat
+    eps = 1e-6
+    y_dist = py - y_t_flat + eps
+    x_dist = px - x_t_flat + eps
 
     heat_scal = heat_map_function(y_dist=y_dist, x_dist=x_dist, x_scale=scale, y_scale=scale)
     heat_scal = heat_scal.reshape(bn, nk, h, w)  # bn width height number parts

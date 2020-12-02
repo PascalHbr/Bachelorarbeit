@@ -23,13 +23,12 @@ def load_images_from_folder():
         img = plt.imread(os.path.join(folder, filename))
         if img is not None:
             images.append(img)
-        if i == 100:
-            break
     return images
 
 
 def make_visualization(original, reconstruction, shape_transform, app_transform, fmap_shape,
-                       fmap_app, directory, epoch, device, index=3):
+                       fmap_app, directory, epoch, device, index=0):
+
     # Color List for Parts
     color_list = ['black', 'gray', 'brown', 'chocolate', 'orange', 'gold', 'olive', 'lawngreen', 'aquamarine',
                   'dodgerblue', 'midnightblue', 'mediumpurple', 'indigo', 'magenta', 'pink', 'springgreen']

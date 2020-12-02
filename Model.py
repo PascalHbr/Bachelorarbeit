@@ -29,17 +29,17 @@ class Model(nn.Module):
 
     def forward(self, x, x_spatial_transform, x_appearance_transform, coord, vector):
         # Shape Stream
-        shape_stream_parts_raw, shape_stream_parts, shape_stream_sum = self.E_sigma(x_appearance_transform)
-        mu, L_inv = get_mu_and_prec(shape_stream_parts, self.device, self.L_inv_scal)
+        shape_stream_parts_raw, shape_stream_parts_norm, shape_stream_sum = self.E_sigma(x_appearance_transform)
+        mu, L_inv = get_mu_and_prec(shape_stream_parts_norm, self.device, self.L_inv_scal)
         # Appearance Stream
-        appearance_stream_parts_raw, appearance_stream_parts, appearance_stream_sum = self.E_sigma(x_spatial_transform)
+        appearance_stream_parts_raw, appearance_stream_parts_norm, appearance_stream_sum = self.E_sigma(x_spatial_transform)
         local_features = self.E_alpha(appearance_stream_sum)
-        local_part_appearances = get_local_part_appearances(local_features, appearance_stream_parts)
+        local_part_appearances = get_local_part_appearances(local_features, appearance_stream_parts_norm)
         # Decoder
         encoding = feat_mu_to_enc(local_part_appearances, mu, L_inv, self.device, self.covariance, self.reconstr_dim)
         reconstruction = self.decoder(encoding)
         # Loss
-        loss = total_loss(x, reconstruction, shape_stream_parts_raw, appearance_stream_parts, mu, coord, vector,
+        loss = total_loss(x, reconstruction, shape_stream_parts_raw, appearance_stream_parts_norm, mu, coord, vector,
                           self.device, self.L_mu, self.L_cov, self.scal, self.l_2_scal, self.l_2_threshold, self.loss_whole)
 
         if self.mode == 'predict':

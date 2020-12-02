@@ -19,7 +19,7 @@ def parse_args():
     parser.add_argument('--reconstr_dim', default=256, type=int, help="dimension of reconstruction")
 
     # modes
-    parser.add_argument('--bn', default=10, type=int,  help="batchsize if not slim and 2 * batchsize if slim")
+    parser.add_argument('--bn', default=8, type=int,  help="batchsize if not slim and 2 * batchsize if slim")
     parser.add_argument('--n_parts', default=16, type=int, help="number of parts")
     parser.add_argument('--n_features', default=64, type=int,  help="neurons of feature map layer")
     parser.add_argument('--n_c', default=3, type=int)

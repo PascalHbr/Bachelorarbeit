@@ -1,7 +1,7 @@
 import torch
 from DataLoader import ImageDataset, DataLoader
 from utils import save_model, load_model, load_images_from_folder, make_visualization
-from Model import Model
+from Model2 import Model2
 from config import parse_args, write_hyperparameters
 from dotmap import DotMap
 from ops import normalize
@@ -34,7 +34,7 @@ def main(arg):
         write_hyperparameters(arg.toDict(), model_save_dir)
 
         # Define Model & Optimizer
-        model = Model(arg).to(device)
+        model = Model2(arg).to(device)
         if load_from_ckpt == True:
             model = load_model(model, model_save_dir).to(device)
         optimizer = torch.optim.Adam(model.parameters(), lr=lr)
@@ -52,24 +52,14 @@ def main(arg):
         test_loader = DataLoader(test_dataset, batch_size=bn, num_workers=4)
 
         # Make Training
-        with torch.autograd.set_detect_anomaly(False):
+        with torch.autograd.set_detect_anomaly(True):
             for epoch in range(epochs+1):
                 # Train on Train Set
                 model.train()
                 model.mode = 'train'
                 for step, original in enumerate(train_loader):
                     original = original.to(device)
-                    # Make transformations
-                    tps_param_dic = tps_parameters(original.shape[0], arg.scal, arg.tps_scal, arg.rot_scal,
-                                                   arg.off_scal, arg.scal_var, arg.augm_scal)
-                    coord, vector = make_input_tps_param(tps_param_dic)
-                    coord, vector = coord.to(device), vector.to(device)
-                    image_spatial_t, _ = ThinPlateSpline(original, coord, vector,
-                                                         original.shape[3], device)
-                    image_appearance_t = K.ColorJitter(arg.brightness, arg.contrast, arg.saturation, arg.hue)(original)
-                    image_spatial_t, image_appearance_t = normalize(image_spatial_t), normalize(image_appearance_t)
-                    reconstruction, loss, rec_loss, equiv_loss, mu, L_inv = model(original, image_spatial_t,
-                                                                                  image_appearance_t, coord, vector)
+                    image_rec, reconstruct_same_id, loss, rec_loss, transform_loss, precision_loss, mu, L_inv = model(original)
                     mu_norm = torch.mean(torch.norm(mu, p=1, dim=2)).cpu().detach().numpy()
                     L_inv_norm = torch.mean(torch.linalg.norm(L_inv, ord='fro', dim=[2, 3])).cpu().detach().numpy()
                     wandb.log({"Part Means": mu_norm})
@@ -78,20 +68,25 @@ def main(arg):
                     optimizer.zero_grad()
                     loss.backward()
                     optimizer.step()
+                    # Track Loss
                     if step == 0:
                         loss_log = torch.tensor([loss])
                         rec_loss_log = torch.tensor([rec_loss])
-                        equiv_loss_log = torch.tensor([equiv_loss])
+                        transform_loss_log = torch.tensor([transform_loss])
+                        precision_loss_log = torch.tensor([precision_loss])
                     else:
                         loss_log = torch.cat([loss_log, torch.tensor([loss])])
                         rec_loss_log = torch.cat([rec_loss_log, torch.tensor([rec_loss])])
-                        equiv_loss_log = torch.cat([equiv_loss_log, torch.tensor([equiv_loss])])
+                        transform_loss_log = torch.cat([transform_loss_log, torch.tensor([transform_loss])])
+                        precision_loss_log = torch.cat([precision_loss_log, torch.tensor([precision_loss])])
                     training_loss = torch.mean(loss_log)
                     training_rec_loss = torch.mean(rec_loss_log)
-                    training_equiv_loss = torch.mean(equiv_loss_log)
+                    training_transform_loss = torch.mean(transform_loss_log)
+                    training_precision_loss = torch.mean(precision_loss_log)
                     wandb.log({"Training Loss": training_loss})
                     wandb.log({"Training Rec Loss": training_rec_loss})
-                    wandb.log({"Training Equiv Loss": training_equiv_loss})
+                    wandb.log({"Training Transform Loss": training_transform_loss})
+                    wandb.log({"Training Precision Loss": training_precision_loss})
                 print(f'Epoch: {epoch}, Train Loss: {training_loss}')
 
                 # Evaluate on Test Set
@@ -99,15 +94,7 @@ def main(arg):
                 for step, original in enumerate(test_loader):
                     with torch.no_grad():
                         original = original.to(device)
-                        tps_param_dic = tps_parameters(original.shape[0], arg.scal, arg.tps_scal, arg.rot_scal, arg.off_scal,
-                                                       arg.scal_var, arg.augm_scal)
-                        coord, vector = make_input_tps_param(tps_param_dic)
-                        coord, vector = coord.to(device), vector.to(device)
-                        image_spatial_t, _ = ThinPlateSpline(original, coord, vector,
-                                                             original.shape[3], device)
-                        image_appearance_t = K.ColorJitter(arg.brightness, arg.contrast, arg.saturation, arg.hue)(original)
-                        image_spatial_t, image_appearance_t = normalize(image_spatial_t), normalize(image_appearance_t)
-                        reconstruction, loss, rec_loss, equiv_loss, mu, L_inv = model(original, image_spatial_t, image_appearance_t, coord, vector)
+                        image_rec, reconstruct_same_id, loss, rec_loss, transform_loss, precision_loss, mu, L_inv = model(original)
                         if step == 0:
                             loss_log = torch.tensor([loss])
                         else:
@@ -119,10 +106,9 @@ def main(arg):
                 # Track Progress
                 if True:
                     model.mode = 'predict'
-                    original, fmap_shape, fmap_app, reconstruction = model(original, image_spatial_t,
-                                                                           image_appearance_t, coord, vector)
-                    make_visualization(original, reconstruction, image_spatial_t, image_appearance_t,
-                                       fmap_shape, fmap_app, model_save_dir, epoch, device)
+                    image_rec, part_maps, part_maps, reconstruct_same_id = model(original)
+                    make_visualization(original, reconstruct_same_id, image_rec[:original.shape[0]], image_rec[original.shape[0]:],
+                                       part_maps[:original.shape[0]], part_maps[original.shape[0]:], model_save_dir, epoch, device)
                     save_model(model, model_save_dir)
 
     elif mode == 'predict':
@@ -131,7 +117,7 @@ def main(arg):
         if not os.path.exists(model_save_dir + '/predictions'):
             os.makedirs(model_save_dir + '/predictions')
         # Load Model and Dataset
-        model = Model(arg).to(device)
+        model = Model2(arg).to(device)
         model = load_model(model, model_save_dir).to(device)
         data = load_images_from_folder()
         test_data = np.array(data[-4:])

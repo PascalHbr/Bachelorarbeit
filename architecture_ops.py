@@ -110,15 +110,15 @@ class E(nn.Module):
                                                       Residual(128, 128),
                                                       Residual(128, residual_dim)
                                                       )
-            self.map_transform = Conv(n_feature, residual_dim, 1, 1)    # channels for addition must be increased
+            self.map_transform = Conv(n_feature, residual_dim, 1, 1, bn=False, relu=False)    # channels for addition must be increased
         if not self.sigma:
             self.preprocess_alpha = Conv(2 * residual_dim, residual_dim, 1, 1, bn=True, relu=True) # for stack
 
     def forward(self, x):
         if self.sigma:
             x = self.preprocess_sigma(x)
-        else:
-            x = self.preprocess_alpha(x) # Try for concatenate instead of sum
+        # else:
+        #     x = self.preprocess_alpha(x) # Try concatenation instead of sum
         out = self.hg(x)
         out = self.out(out)
         # Get Normalized Feature Maps for E_sigma
@@ -126,8 +126,8 @@ class E(nn.Module):
         if self.sigma:
             map_normalized = softmax(feature_map)
             map_transformed = self.map_transform(map_normalized)
-            stack = torch.cat((map_transformed, x), dim=1) # Try for concatenate instead of sum
-            #stack = map_transformed + x
+            # stack = torch.cat((map_transformed, x), dim=1) # Try concatenation instead of sum
+            stack = map_transformed + x
             return feature_map, map_normalized, stack
         else:
             return feature_map
@@ -141,7 +141,6 @@ class Nccuc(nn.Module):
         self.down_Conv = Conv(inp_dim=in_channels, out_dim=filters[0], kernel_size=3, stride=1, bn=True, relu=True)
         self.up_Conv = nn.ConvTranspose2d(in_channels=filters[0], out_channels=filters[1], kernel_size=4, stride=2,
                                           padding=1)
-        self.relu = nn.LeakyReLU()
 
     def forward(self, input_A, input_B):
         down_conv = self.down_Conv(input_A)

@@ -27,7 +27,7 @@ def parse_args():
     parser.add_argument('--depth_a', default=1, type=int, help="depth of appearance hourglass")
 
     # loss multiplication constants
-    parser.add_argument('--lr',  default=0.0001, type=float, help="learning rate of network")
+    parser.add_argument('--lr',  default=1e-3, type=float, help="learning rate of network")
     parser.add_argument('--p_dropout', default=0.2, type=float, help="dropout rate")
     parser.add_argument('--weight_decay', default=1e-4, type=float, help="weight_decay")
     parser.add_argument('--L_mu', default=5., type=float, help="")

@@ -28,7 +28,7 @@ def parse_args():
 
     # loss multiplication constants
     parser.add_argument('--lr',  default=1e-3, type=float, help="learning rate of network")
-    parser.add_argument('--p_dropout', default=0.2, type=float, help="dropout rate")
+    parser.add_argument('--p_dropout', default=0, type=float, help="dropout rate")
     parser.add_argument('--weight_decay', default=1e-4, type=float, help="weight_decay")
     parser.add_argument('--L_mu', default=5., type=float, help="")
     parser.add_argument('--L_cov', default=0.1, type=float, help="")

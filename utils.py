@@ -1,6 +1,7 @@
 import torch
 import matplotlib.pyplot as plt
 import os
+import csv
 from matplotlib import colors
 from matplotlib.backends.backend_pdf import PdfPages
 from architecture_ops import softmax
@@ -24,6 +25,31 @@ def load_images_from_folder():
         if img is not None:
             images.append(img)
     return images
+
+
+def load_deep_fashion_dataset():
+    data_folder = "/export/scratch/compvis/datasets/deepfashion_inshop/Img/img/"
+    csv_folder = "/export/scratch/compvis/datasets/compvis-datasets/deepfashion_allJointsVisible/"
+    train_images = []
+    test_images = []
+
+    with open(csv_folder + "data_train.csv") as train_file:
+        train_reader = csv.reader(train_file)
+        next(train_reader)  # ignore first row
+        for row in train_reader:
+            img_path = row[1]
+            img = plt.imread(os.path.join(data_folder, img_path))
+            train_images.append(img)
+
+    with open(csv_folder + "data_test.csv") as test_file:
+        test_reader = csv.reader(test_file)
+        next(test_reader)  # ignore first row
+        for row in test_reader:
+            img_path = row[1]
+            img = plt.imread(os.path.join(data_folder, img_path))
+            test_images.append(img)
+
+    return train_images, test_images
 
 
 def make_visualization(original, reconstruction, shape_transform, app_transform, fmap_shape,

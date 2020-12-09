@@ -79,7 +79,6 @@ def fold_img_with_mu(img, mu, scale, threshold, device, normalize=True):
         :param img: batch of images
         :param mu:  batch of part means in range [-1, 1]
         :param scale: scale that governs the range of the potential
-        :param visualize:
         :param normalize: whether to normalize the potentials
         :return: folded image
         """
@@ -120,7 +119,6 @@ def fold_img_with_L_inv(img, mu, L_inv, scale, threshold, device, normalize=True
         :param img: batch of images
         :param mu:  batch of part means in range [-1, 1]
         :param scale: scale that governs the range of the potential
-        :param visualize:
         :param normalize: whether to normalize the potentials
         :return: folded image
         """

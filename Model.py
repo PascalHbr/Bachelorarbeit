@@ -1,6 +1,7 @@
 import torch.nn as nn
 from architecture_ops import E, Decoder
-from ops import feat_mu_to_enc, get_local_part_appearances, get_mu_and_prec, total_loss, get_heat_map
+from ops import feat_mu_to_enc, get_local_part_appearances, get_mu_and_prec, total_loss
+
 
 class Model(nn.Module):
     def __init__(self, arg):
@@ -13,6 +14,7 @@ class Model(nn.Module):
         self.device = arg.device
         self.depth_s = arg.depth_s
         self.depth_a = arg.depth_a
+        self.p_dropout = arg.p_dropout
         self.residual_dim = arg.residual_dim
         self.covariance = arg.covariance
         self.L_mu = arg.L_mu
@@ -23,8 +25,8 @@ class Model(nn.Module):
         self.scal = arg.scal
         self.L_inv_scal = arg.L_inv_scal
         self.fold_with_shape = arg.fold_with_shape
-        self.E_sigma = E(self.depth_s, self.n_parts, residual_dim=self.residual_dim, sigma=True)
-        self.E_alpha = E(self.depth_a, self.n_features, residual_dim=self.residual_dim, sigma=False)
+        self.E_sigma = E(self.depth_s, self.n_parts, self.residual_dim, self.p_dropout, sigma=True)
+        self.E_alpha = E(self.depth_a, self.n_features, self.residual_dim, self.p_dropout, sigma=False)
         self.decoder = Decoder(self.n_parts, self.n_features, self.reconstr_dim)
 
     def forward(self, x, x_spatial_transform, x_appearance_transform, coord, vector):
@@ -48,9 +50,3 @@ class Model(nn.Module):
 
         elif self.mode == 'train':
             return reconstruction, loss, rec_loss, equiv_loss, mu, L_inv
-
-
-
-
-
-

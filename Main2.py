@@ -1,10 +1,9 @@
 import torch
 from DataLoader import ImageDataset, DataLoader
-from utils import save_model, load_model, load_images_from_folder, make_visualization
+from utils import save_model, load_model, load_deep_fashion_dataset, make_visualization
 from Model2 import Model2
 from config import parse_args, write_hyperparameters
 from dotmap import DotMap
-from ops import normalize
 import os
 import numpy as np
 from transformations import tps_parameters, make_input_tps_param, ThinPlateSpline
@@ -13,6 +12,11 @@ import wandb
 
 
 def main(arg):
+    # Set random seeds
+    torch.manual_seed(7)
+    torch.cuda.manual_seed(7)
+    np.random.seed(7)
+
     # Get args
     bn = arg.bn
     mode = arg.mode
@@ -35,7 +39,7 @@ def main(arg):
 
         # Define Model & Optimizer
         model = Model2(arg).to(device)
-        if load_from_ckpt == True:
+        if load_from_ckpt:
             model = load_model(model, model_save_dir).to(device)
         optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
@@ -43,11 +47,9 @@ def main(arg):
         wandb.init(project='Disentanglement', config=arg, name=arg.name)
         wandb.watch(model, log='all')
         # Load Datasets and DataLoader
-        data = load_images_from_folder()
-        train_data = np.array(data[:-1000])
-        train_dataset = ImageDataset(train_data)
-        test_data = np.array(data[-1000:])
-        test_dataset = ImageDataset(test_data)
+        train_data, test_data = load_deep_fashion_dataset()
+        train_dataset = ImageDataset(np.array(train_data))
+        test_dataset = ImageDataset(np.array(test_data))
         train_loader = DataLoader(train_dataset, batch_size=bn, shuffle=True, num_workers=4)
         test_loader = DataLoader(test_dataset, batch_size=bn, num_workers=4)
 
@@ -108,7 +110,7 @@ def main(arg):
                     model.mode = 'predict'
                     image_rec, part_maps, part_maps, reconstruct_same_id = model(original)
                     make_visualization(original, reconstruct_same_id, image_rec[:original.shape[0]], image_rec[original.shape[0]:],
-                                       part_maps[:original.shape[0]], part_maps[original.shape[0]:], model_save_dir, epoch, device)
+                                       part_maps[original.shape[0]:], part_maps[:original.shape[0]], model_save_dir, epoch, device)
                     save_model(model, model_save_dir)
 
     elif mode == 'predict':
@@ -119,7 +121,7 @@ def main(arg):
         # Load Model and Dataset
         model = Model2(arg).to(device)
         model = load_model(model, model_save_dir).to(device)
-        data = load_images_from_folder()
+        data = load_deep_fashion_dataset()
         test_data = np.array(data[-4:])
         test_dataset = ImageDataset(test_data)
         test_loader = DataLoader(test_dataset, batch_size=bn)

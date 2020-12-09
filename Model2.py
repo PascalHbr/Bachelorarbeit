@@ -19,6 +19,7 @@ class Model2(nn.Module):
         self.device = arg.device
         self.depth_s = arg.depth_s
         self.depth_a = arg.depth_a
+        self.p_dropout = arg.p_dropout
         self.residual_dim = arg.residual_dim
         self.covariance = arg.covariance
         self.L_mu = arg.L_mu
@@ -33,14 +34,16 @@ class Model2(nn.Module):
         self.scal_var = arg.scal_var
         self.augm_scal = arg.augm_scal
         self.fold_with_shape = arg.fold_with_shape
-        self.E_sigma = E(self.depth_s, self.n_parts, residual_dim=self.residual_dim, sigma=True)
-        self.E_alpha = E(self.depth_a, self.n_features, residual_dim=self.residual_dim, sigma=False)
+        self.E_sigma = E(self.depth_s, self.n_parts, self.residual_dim, self.p_dropout, sigma=True)
+        self.E_alpha = E(self.depth_a, self.n_features, self.residual_dim, self.p_dropout, sigma=False)
         self.decoder = Decoder(self.n_parts, self.n_features, self.reconstr_dim)
 
     def forward(self, x):
+        batch_size = x.shape[0]
+        batch_size2 = 2 * x.shape[0]
         # tps
         image_orig = x.repeat(2, 1, 1, 1)
-        tps_param_dic = tps_parameters(image_orig.shape[0], self.scal, self.tps_scal, self.rot_scal, self.off_scal,
+        tps_param_dic = tps_parameters(batch_size2, self.scal, self.tps_scal, self.rot_scal, self.off_scal,
                                        self.scal_var, self.augm_scal)
         coord, vector = make_input_tps_param(tps_param_dic)
         coord, vector = coord.to(self.device), vector.to(self.device)
@@ -67,7 +70,7 @@ class Model2(nn.Module):
         encoding = feat_mu_to_enc(features, mu, L_inv, self.device, self.covariance, self.reconstr_dim)
         reconstruct_same_id = self.decoder(encoding)
 
-        total_loss, rec_loss, transform_loss, precision_loss = loss_fn(x.shape[0], mu, L_inv, mu_t, stddev_t,
+        total_loss, rec_loss, transform_loss, precision_loss = loss_fn(batch_size, mu, L_inv, mu_t, stddev_t,
                                                                        reconstruct_same_id, image_rec, self.fold_with_shape,
                                                                        self.l_2_scal, self.l_2_threshold, self.L_mu, self.L_cov,
                                                                        self.device)

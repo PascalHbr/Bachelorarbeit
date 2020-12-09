@@ -1,6 +1,6 @@
 import torch
 from DataLoader import ImageDataset, DataLoader
-from utils import save_model, load_model, load_images_from_folder, make_visualization
+from utils import save_model, load_model, load_deep_fashion_dataset, make_visualization
 from Model import Model
 from config import parse_args, write_hyperparameters
 from dotmap import DotMap
@@ -13,6 +13,11 @@ import wandb
 
 
 def main(arg):
+    # Set random seeds
+    torch.manual_seed(7)
+    torch.cuda.manual_seed(7)
+    np.random.seed(7)
+
     # Get args
     bn = arg.bn
     mode = arg.mode
@@ -35,7 +40,7 @@ def main(arg):
 
         # Define Model & Optimizer
         model = Model(arg).to(device)
-        if load_from_ckpt == True:
+        if load_from_ckpt:
             model = load_model(model, model_save_dir).to(device)
         optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
@@ -43,11 +48,9 @@ def main(arg):
         wandb.init(project='Disentanglement', config=arg, name=arg.name)
         wandb.watch(model, log='all')
         # Load Datasets and DataLoader
-        data = load_images_from_folder()
-        train_data = np.array(data[:-1000])
-        train_dataset = ImageDataset(train_data)
-        test_data = np.array(data[-1000:])
-        test_dataset = ImageDataset(test_data)
+        train_data, test_data = load_deep_fashion_dataset()
+        train_dataset = ImageDataset(np.array(train_data))
+        test_dataset = ImageDataset(np.array(test_data))
         train_loader = DataLoader(train_dataset, batch_size=bn, shuffle=True, num_workers=4)
         test_loader = DataLoader(test_dataset, batch_size=bn, num_workers=4)
 
@@ -78,20 +81,17 @@ def main(arg):
                     optimizer.zero_grad()
                     loss.backward()
                     optimizer.step()
+                    # Track Loss
                     if step == 0:
                         loss_log = torch.tensor([loss])
                         rec_loss_log = torch.tensor([rec_loss])
-                        equiv_loss_log = torch.tensor([equiv_loss])
                     else:
                         loss_log = torch.cat([loss_log, torch.tensor([loss])])
                         rec_loss_log = torch.cat([rec_loss_log, torch.tensor([rec_loss])])
-                        equiv_loss_log = torch.cat([equiv_loss_log, torch.tensor([equiv_loss])])
                     training_loss = torch.mean(loss_log)
                     training_rec_loss = torch.mean(rec_loss_log)
-                    training_equiv_loss = torch.mean(equiv_loss_log)
                     wandb.log({"Training Loss": training_loss})
                     wandb.log({"Training Rec Loss": training_rec_loss})
-                    wandb.log({"Training Equiv Loss": training_equiv_loss})
                 print(f'Epoch: {epoch}, Train Loss: {training_loss}')
 
                 # Evaluate on Test Set
@@ -133,7 +133,7 @@ def main(arg):
         # Load Model and Dataset
         model = Model(arg).to(device)
         model = load_model(model, model_save_dir).to(device)
-        data = load_images_from_folder()
+        data = load_deep_fashion_dataset()
         test_data = np.array(data[-4:])
         test_dataset = ImageDataset(test_data)
         test_loader = DataLoader(test_dataset, batch_size=bn)
@@ -153,7 +153,7 @@ def main(arg):
                 image, reconstruction, mu, shape_stream_parts, heat_map = model(original, image_spatial_t,
                                                                                 image_appearance_t, coord, vector)
 
+
 if __name__ == '__main__':
     arg = DotMap(vars(parse_args()))
     main(arg)
-

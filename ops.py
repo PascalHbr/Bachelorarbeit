@@ -1,5 +1,4 @@
 import torch
-import torch.nn as nn
 from transformations import ThinPlateSpline
 from opt_einsum import contract
 from architecture_ops import softmax
@@ -192,7 +191,6 @@ def total_loss(input, reconstr, sig_shape_raw, sig_app, mu, L_inv, coord, vector
         fold_img_squared, heat_mask_l2 = fold_img_with_mu(distance_metric, mu, l_2_scal, l_2_threshold, device)
 
     rec_loss = torch.mean(torch.sum(fold_img_squared, dim=[2, 3]))
-    rec_loss = nn.L1Loss()(reconstr, input)
     total_loss = rec_loss + equiv_loss
     return total_loss, rec_loss, equiv_loss
 
@@ -208,7 +206,6 @@ def fold_img_with_mu(img, mu, scale, threshold, device, normalize=True):
         :param img: batch of images
         :param mu:  batch of part means in range [-1, 1]
         :param scale: scale that governs the range of the potential
-        :param visualize:
         :param normalize: whether to normalize the potentials
         :return: folded image
         """
@@ -249,7 +246,6 @@ def fold_img_with_L_inv(img, mu, L_inv, scale, threshold, device, normalize=True
         :param img: batch of images
         :param mu:  batch of part means in range [-1, 1]
         :param scale: scale that governs the range of the potential
-        :param visualize:
         :param normalize: whether to normalize the potentials
         :return: folded image
         """

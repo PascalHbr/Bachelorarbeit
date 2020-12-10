@@ -76,7 +76,8 @@ class Model2(nn.Module):
                                                                        self.device)
 
         if self.mode == 'predict':
-            return image_rec, part_maps_raw, part_maps_raw, reconstruct_same_id
+            original_part_maps_raw, original_part_maps_norm, original_sum_part_maps = self.E_sigma(x)
+            return original_part_maps_raw, image_rec, part_maps_raw, part_maps_raw, reconstruct_same_id
 
         elif self.mode == 'train':
             return image_rec, reconstruct_same_id, total_loss, rec_loss, transform_loss, precision_loss, mu, L_inv

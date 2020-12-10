@@ -9,7 +9,7 @@ def get_local_part_appearances(f, sig):
     return alpha
 
 
-def get_mu_and_prec(part_maps, device, scal):
+def get_mu_and_prec(part_maps, device, L_inv_scal):
     """
         Calculate mean for each channel of part_maps
         :param part_maps: tensor of part map activations [bn, n_part, h, w]
@@ -39,7 +39,7 @@ def get_mu_and_prec(part_maps, device, scal):
     det = (a * c).unsqueeze(-1).unsqueeze(-1)
     row_1 = torch.cat((c.unsqueeze(-1), z.unsqueeze(-1)), dim=-1).unsqueeze(-2)
     row_2 = torch.cat((-b.unsqueeze(-1), a.unsqueeze(-1)), dim=-1).unsqueeze(-2)
-    L_inv = scal / (det + eps) * torch.cat((row_1, row_2), dim=-2)  # L^⁻1 = 1/(ac)* [[c, 0], [-b, a]
+    L_inv = L_inv_scal / (det + eps) * torch.cat((row_1, row_2), dim=-2)  # L^⁻1 = 1/(ac)* [[c, 0], [-b, a]
     return mu, L_inv
 
 

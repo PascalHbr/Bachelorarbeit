@@ -12,8 +12,8 @@ def save_model(model, model_save_dir):
     torch.save(model.state_dict(), model_save_dir + '/parameters')
 
 
-def load_model(model, model_save_dir):
-    model.load_state_dict(torch.load(model_save_dir + '/parameters'))
+def load_model(model, model_save_dir, device):
+    model.load_state_dict(torch.load(model_save_dir + '/parameters', map_location=device))
     return model
 
 
@@ -52,24 +52,29 @@ def load_deep_fashion_dataset():
     return train_images, test_images
 
 
-def make_visualization(original, reconstruction, shape_transform, app_transform, fmap_shape,
-                       fmap_app, directory, epoch, device, index=0):
+def make_visualization(original, original_part_maps, reconstruction, shape_transform, app_transform, fmap_shape,
+                       fmap_app, L_inv_scale, directory, epoch, device, index=0):
 
     # Color List for Parts
     color_list = ['black', 'gray', 'brown', 'chocolate', 'orange', 'gold', 'olive', 'lawngreen', 'aquamarine',
                   'dodgerblue', 'midnightblue', 'mediumpurple', 'indigo', 'magenta', 'pink', 'springgreen']
     # Get Maps
     fmap_shape_norm = softmax(fmap_shape)
-    mu_shape, L_inv_shape = get_mu_and_prec(fmap_shape_norm, device, scal=5.)
+    mu_shape, L_inv_shape = get_mu_and_prec(fmap_shape_norm, device, L_inv_scale)
     heat_map_shape = get_heat_map(mu_shape, L_inv_shape, device)
 
     fmap_app_norm = softmax(fmap_app)
-    mu_app, L_inv_app = get_mu_and_prec(fmap_app_norm, device, scal=5.)
+    mu_app, L_inv_app = get_mu_and_prec(fmap_app_norm, device, L_inv_scale)
     heat_map_app = get_heat_map(mu_app, L_inv_app, device)
 
-    with PdfPages(directory + '/summary/' + str(epoch) + '_summary.pdf') as pdf:
+    overlay_original = visualize_keypoints(original_part_maps, L_inv_scale, device)
+    cmap = colors.LinearSegmentedColormap.from_list('my_colormap',
+                                                    ['white', color_list[0]],
+                                                    256)
+
+    with PdfPages(directory + str(epoch) + '_summary.pdf') as pdf:
         # Make Head with Overview
-        fig_head, axs_head = plt.subplots(3, 4, figsize=(12, 12))
+        fig_head, axs_head = plt.subplots(5, 4, figsize=(12, 12))
         fig_head.suptitle("Overview", fontsize="x-large")
         axs_head[0, 0].imshow(original[index].permute(1, 2, 0).cpu().detach().numpy())
         axs_head[0, 1].imshow(app_transform[index].permute(1, 2, 0).cpu().detach().numpy())
@@ -83,6 +88,16 @@ def make_visualization(original, reconstruction, shape_transform, app_transform,
         axs_head[2, 1].imshow(reconstruction[1].permute(1, 2, 0).cpu().detach().numpy())
         axs_head[2, 2].imshow(reconstruction[2].permute(1, 2, 0).cpu().detach().numpy())
         axs_head[2, 3].imshow(reconstruction[3].permute(1, 2, 0).cpu().detach().numpy())
+
+        axs_head[3, 0].imshow(original[0].permute(1, 2, 0).cpu().detach().numpy())
+        axs_head[3, 1].imshow(original[1].permute(1, 2, 0).cpu().detach().numpy())
+        axs_head[3, 2].imshow(original[2].permute(1, 2, 0).cpu().detach().numpy())
+        axs_head[3, 3].imshow(original[3].permute(1, 2, 0).cpu().detach().numpy())
+
+        axs_head[4, 0].imshow(overlay_original[0].cpu().detach().numpy(), cmap=cmap)
+        axs_head[4, 1].imshow(overlay_original[1].cpu().detach().numpy(), cmap=cmap)
+        axs_head[4, 2].imshow(overlay_original[2].cpu().detach().numpy(), cmap=cmap)
+        axs_head[4, 3].imshow(overlay_original[3].cpu().detach().numpy(), cmap=cmap)
 
         # Part Visualization Shape Stream
         fig_shape, axs_shape = plt.subplots(8, 6, figsize=(8, 8))
@@ -133,3 +148,12 @@ def make_visualization(original, reconstruction, shape_transform, app_transform,
         pdf.savefig(fig_app)
 
         plt.close('all')
+
+
+def visualize_keypoints(fmap, L_inv_scale, device):
+    fmap_norm = softmax(fmap)
+    mu, L_inv = get_mu_and_prec(fmap_norm, device, L_inv_scale)
+    heat_map = get_heat_map(mu, L_inv, device)
+    heat_map_overlay = torch.sum(heat_map, dim=1)
+
+    return heat_map_overlay

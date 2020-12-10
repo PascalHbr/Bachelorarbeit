@@ -23,6 +23,7 @@ def main(arg):
     name = arg.name
     load_from_ckpt = arg.load_from_ckpt
     lr = arg.lr
+    L_inv_scal = arg.L_inv_scal
     epochs = arg.epochs
     device = torch.device('cuda:' + str(arg.gpu) if torch.cuda.is_available() else 'cpu')
     arg.device = device
@@ -40,7 +41,7 @@ def main(arg):
         # Define Model & Optimizer
         model = Model2(arg).to(device)
         if load_from_ckpt:
-            model = load_model(model, model_save_dir).to(device)
+            model = load_model(model, model_save_dir, device).to(device)
         optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
         # Log with wandb
@@ -105,41 +106,47 @@ def main(arg):
                 wandb.log({"Evaluation Loss": evaluation_loss})
                 print(f'Epoch: {epoch}, Test Loss: {evaluation_loss}')
 
-                # Track Progress
-                if True:
-                    model.mode = 'predict'
-                    image_rec, part_maps, part_maps, reconstruct_same_id = model(original)
-                    make_visualization(original, reconstruct_same_id, image_rec[:original.shape[0]], image_rec[original.shape[0]:],
-                                       part_maps[original.shape[0]:], part_maps[:original.shape[0]], model_save_dir, epoch, device)
-                    save_model(model, model_save_dir)
+                # Track Progress & Visualization
+                for step, original in enumerate(test_loader):
+                    with torch.no_grad():
+                        model.mode = 'predict'
+                        original = original.to(device)
+                        original_part_maps, image_rec, part_maps, part_maps, reconstruct_same_id = model(original)
+                        make_visualization(original, original_part_maps, reconstruct_same_id, image_rec[:original.shape[0]],
+                                           image_rec[original.shape[0]:], part_maps[original.shape[0]:],
+                                           part_maps[:original.shape[0]], L_inv_scal, model_save_dir + '/summary/', epoch, device)
+                        save_model(model, model_save_dir)
+
+                        if step == 0:
+                            break
 
     elif mode == 'predict':
         # Make Directory for Predictions
         model_save_dir = '../results/' + name
-        if not os.path.exists(model_save_dir + '/predictions'):
-            os.makedirs(model_save_dir + '/predictions')
+        prediction_save_dir = model_save_dir + '/predictions/'
+        if not os.path.exists(prediction_save_dir):
+            os.makedirs(prediction_save_dir)
+
         # Load Model and Dataset
         model = Model2(arg).to(device)
-        model = load_model(model, model_save_dir).to(device)
-        data = load_deep_fashion_dataset()
-        test_data = np.array(data[-4:])
-        test_dataset = ImageDataset(test_data)
-        test_loader = DataLoader(test_dataset, batch_size=bn)
+        model = load_model(model, model_save_dir, device)
+        train_data, test_data = load_deep_fashion_dataset()
+        test_dataset = ImageDataset(np.array(test_data))
+        test_loader = DataLoader(test_dataset, shuffle=True, batch_size=bn, num_workers=4)
         model.mode = 'predict'
         model.eval()
+
         # Predict on Dataset
         for step, original in enumerate(test_loader):
             with torch.no_grad():
                 original = original.to(device)
-                tps_param_dic = tps_parameters(original.shape[0], arg.scal, arg.tps_scal, arg.rot_scal, arg.off_scal,
-                                               arg.scal_var, arg.augm_scal)
-                coord, vector = make_input_tps_param(tps_param_dic)
-                coord, vector = coord.to(device), vector.to(device)
-                image_spatial_t, _ = ThinPlateSpline(original, coord, vector,
-                                                     original.shape[3], device)
-                image_appearance_t = K.ColorJitter(arg.brightness, arg.contrast, arg.saturation, arg.hue)(original)
-                image, reconstruction, mu, shape_stream_parts, heat_map = model(original, image_spatial_t,
-                                                                                image_appearance_t, coord, vector)
+                original_part_maps, image_rec, part_maps, part_maps, reconstruct_same_id = model(original)
+                make_visualization(original, original_part_maps, reconstruct_same_id, image_rec[:original.shape[0]],
+                                   image_rec[original.shape[0]:], part_maps[original.shape[0]:],
+                                   part_maps[:original.shape[0]], L_inv_scal, prediction_save_dir, 0, device)
+                if step == 0:
+                    break
+
 
 if __name__ == '__main__':
     arg = DotMap(vars(parse_args()))

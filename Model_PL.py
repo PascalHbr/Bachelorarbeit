@@ -4,7 +4,7 @@ from DataLoader import ImageDataset
 from torch.utils.data import DataLoader
 from torchvision import transforms
 from opt_einsum import contract
-from architecture_ops import E, Decoder
+from architecture import E, Decoder
 from ops_old import feat_mu_to_enc, get_local_part_appearances, get_mu_and_prec
 from ops import prepare_pairs, AbsDetJacobian, loss_fn
 from transformations import tps_parameters, make_input_tps_param, ThinPlateSpline

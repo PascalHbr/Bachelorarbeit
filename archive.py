@@ -326,7 +326,7 @@ def main2(arg):
 import torch
 from transformations import ThinPlateSpline
 from opt_einsum import contract
-from architecture_ops import softmax
+from architecture import softmax
 
 
 def get_local_part_appearances(f, sig):
@@ -616,7 +616,7 @@ def normalize(image):
 
 
 import torch.nn as nn
-from architecture_ops import E, Decoder
+from architecture import E, Decoder
 from ops_old import feat_mu_to_enc, get_local_part_appearances, get_mu_and_prec, total_loss
 
 

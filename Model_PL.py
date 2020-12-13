@@ -5,8 +5,7 @@ from torch.utils.data import DataLoader
 from torchvision import transforms
 from opt_einsum import contract
 from architecture import E, Decoder
-from ops_old import feat_mu_to_enc, get_local_part_appearances, get_mu_and_prec
-from ops import prepare_pairs, AbsDetJacobian, loss_fn
+from ops import prepare_pairs, AbsDetJacobian, loss_fn, feat_mu_to_enc, get_local_part_appearances, get_mu_and_prec
 from transformations import tps_parameters, make_input_tps_param, ThinPlateSpline
 from utils import load_deep_fashion_dataset
 from config import parse_args
@@ -32,12 +31,13 @@ class DeepFashionDataModule(pl.LightningDataModule):
     def setup(self, stage=None):
         # Assign train/val datasets for use in dataloaders
         if stage == 'fit' or stage is None:
-            self.train_data, self.val_data = load_deep_fashion_dataset(stage)
-            self.train_dataset, self.val_dataset = ImageDataset(self.train_data), ImageDataset(self.val_data)
+            self.train_data, self.val_data, self.train_keypoints, self.test_keypoints = load_deep_fashion_dataset(stage)
+            self.train_dataset, self.val_dataset = ImageDataset(self.train_data, self.train_keypoints), \
+                                                   ImageDataset(self.val_data, self.test_keypoints)
 
         if stage == 'test':
             self.test_data = load_deep_fashion_dataset(stage)
-            self.test_dataset = ImageDataset(self.test_data)
+            self.test_dataset = ImageDataset(self.test_data, self.test_keypoints)
 
     def train_dataloader(self):
         return DataLoader(self.train_dataset, batch_size=self.batch_size, num_workers=4)
@@ -82,7 +82,7 @@ class Model(pl.LightningModule):
         self.E_alpha = E(self.depth_a, self.n_features, self.residual_dim, self.p_dropout, sigma=False)
         self.decoder = Decoder(self.n_parts, self.n_features, self.reconstr_dim)
 
-    def forward(self, x):
+    def forward(self, x, keypoints):
         batch_size = x.shape[0]
         batch_size2 = 2 * x.shape[0]
         # tps

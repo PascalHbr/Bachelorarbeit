@@ -8,6 +8,7 @@ from matplotlib.backends.backend_pdf import PdfPages
 from architecture import softmax
 from ops import get_heat_map, get_mu_and_prec
 import cv2
+import json
 
 
 def save_model(model, model_save_dir):
@@ -32,8 +33,11 @@ def load_images_from_folder():
 def load_deep_fashion_dataset(stage=None):
     data_folder = "/export/scratch/compvis/datasets/deepfashion_inshop/Img/img/"
     csv_folder = "/export/scratch/compvis/datasets/compvis-datasets/deepfashion_allJointsVisible/"
+    annotations = "/export/scratch/compvis/datasets/compvis-datasets/deepfashion_keypoints/data/annotations.json"
     train_images = []
     test_images = []
+    mus_train = []
+    mus_test = []
 
     if stage == 'fit' or stage is None:
 
@@ -44,6 +48,10 @@ def load_deep_fashion_dataset(stage=None):
                 img_path = row[1]
                 img = plt.imread(os.path.join(data_folder, img_path))
                 train_images.append(img)
+                with open(annotations) as df:
+                    data = json.load(df)
+                    mu = next(image["keypoints"] for image in data if image['image_path'] == img_path)
+                    mus_train.append(mu)
 
         with open(csv_folder + "data_test.csv") as test_file:
             test_reader = csv.reader(test_file)
@@ -52,8 +60,12 @@ def load_deep_fashion_dataset(stage=None):
                 img_path = row[1]
                 img = plt.imread(os.path.join(data_folder, img_path))
                 test_images.append(img)
+                with open(annotations) as df:
+                    data = json.load(df)
+                    mu = next(image["keypoints"] for image in data if image['image_path'] == img_path)
+                    mus_test.append(mu)
 
-        return np.array(train_images), np.array(test_images)
+        return np.array(train_images), np.array(test_images), np.array(mus_train), np.array(mus_test)
 
     if stage == 'test':
 
@@ -64,8 +76,12 @@ def load_deep_fashion_dataset(stage=None):
                 img_path = row[1]
                 img = plt.imread(os.path.join(data_folder, img_path))
                 test_images.append(img)
+                with open(annotations) as df:
+                    data = json.load(df)
+                    mu = next(image["keypoints"] for image in data if image['image_path'] == img_path)
+                    mus_test.append(mu)
 
-        return np.array(test_images)
+        return np.array(test_images), np.array(mus_test)
 
 
 def make_visualization(original, original_part_maps, reconstruction, shape_transform, app_transform, fmap_shape,
@@ -189,3 +205,8 @@ def visualize_keypoints(img, fmap, L_inv_scale, device):
                            markerSize=15, thickness=1, line_type=cv2.LINE_AA)
 
     return heat_map_overlay, img
+
+
+if __name__ == '__main__':
+    train_data, test_data, train_keypoints, test_keypoints = load_deep_fashion_dataset()
+    print(len(train_keypoints))

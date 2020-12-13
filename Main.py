@@ -46,9 +46,9 @@ def main(arg):
         wandb.init(project='Disentanglement', config=arg, name=arg.name)
         wandb.watch(model, log='all')
         # Load Datasets and DataLoader
-        train_data, test_data = load_deep_fashion_dataset()
-        train_dataset = ImageDataset(train_data)
-        test_dataset = ImageDataset(test_data)
+        train_data, test_data, train_keypoints, test_keypoints = load_deep_fashion_dataset()
+        train_dataset = ImageDataset(train_data, train_keypoints)
+        test_dataset = ImageDataset(test_data, test_keypoints)
         train_loader = DataLoader(train_dataset, batch_size=bn, shuffle=True, num_workers=4)
         test_loader = DataLoader(test_dataset, batch_size=bn, num_workers=4)
 
@@ -58,7 +58,7 @@ def main(arg):
                 # Train on Train Set
                 model.train()
                 model.mode = 'train'
-                for step, original in enumerate(train_loader):
+                for step, (original, keypoints) in enumerate(train_loader):
                     original = original.to(device)
                     image_rec, reconstruct_same_id, loss, rec_loss, transform_loss, precision_loss, mu, L_inv = model(original)
                     mu_norm = torch.mean(torch.norm(mu, p=1, dim=2)).cpu().detach().numpy()
@@ -128,14 +128,14 @@ def main(arg):
         # Load Model and Dataset
         model = Model(arg).to(device)
         model = load_model(model, model_save_dir, device)
-        train_data, test_data = load_deep_fashion_dataset()
-        test_dataset = ImageDataset(np.array(test_data))
+        train_data, test_data, train_keypoints, test_keypoints = load_deep_fashion_dataset()
+        test_dataset = ImageDataset(test_data, test_keypoints)
         test_loader = DataLoader(test_dataset, shuffle=True, batch_size=bn, num_workers=4)
         model.mode = 'predict'
         model.eval()
 
         # Predict on Dataset
-        for step, original in enumerate(test_loader):
+        for step, (original, keypoints) in enumerate(test_loader):
             with torch.no_grad():
                 original = original.to(device)
                 original_part_maps, image_rec, part_maps, part_maps, reconstruct_same_id = model(original)

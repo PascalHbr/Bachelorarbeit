@@ -3,9 +3,10 @@ from torch.utils.data import Dataset, DataLoader
 
 
 class ImageDataset(Dataset):
-    def __init__(self, images):
+    def __init__(self, images, keypoints):
         super(ImageDataset, self).__init__()
         self.images = images
+        self.keypoints = keypoints
         self.transforms = transforms.Compose([transforms.ToTensor()])
 
     def __len__(self):
@@ -14,6 +15,9 @@ class ImageDataset(Dataset):
     def __getitem__(self, index):
         # Select Image
         image = self.images[index]
-        image = self.transforms(image)
+        keypoint = self.keypoints[index]
 
-        return image
+        image = self.transforms(image)
+        keypoint = self.transforms(keypoint)
+
+        return image, keypoint

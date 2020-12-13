@@ -8,6 +8,29 @@ def softmax(logit_map):
     return map_norm
 
 
+class LayerNorm(nn.Module):
+    def __init__(self, num_features, eps=1e-5, affine=True):
+        super(LayerNorm, self).__init__()
+        self.num_features = num_features
+        self.affine = affine
+        self.eps = eps
+
+        if self.affine:
+            self.gamma = nn.Parameter(torch.Tensor(num_features).uniform_())
+            self.beta = nn.Parameter(torch.zeros(num_features))
+
+    def forward(self, x):
+        shape = [-1] + [1] * (x.dim() - 1)
+        mean = x.view(x.size(0), -1).mean(1).view(*shape)
+        std = x.view(x.size(0), -1).std(1).view(*shape)
+
+        y = (x - mean) / (std + self.eps)
+        if self.affine:
+            shape = [1, -1] + [1] * (x.dim() - 2)
+            y = self.gamma.view(*shape) * y + self.beta.view(*shape)
+        return y
+
+
 class Conv(nn.Module):
     def __init__(self, inp_dim, out_dim, kernel_size=3, stride=1, bn=True, relu=True):
         super(Conv, self).__init__()
@@ -18,7 +41,7 @@ class Conv(nn.Module):
         if relu:
             self.relu = nn.LeakyReLU()
         if bn:
-            self.bn = nn.BatchNorm2d(out_dim)
+            self.bn = nn.InstanceNorm2d(out_dim)
 
     def forward(self, x):
         x = self.conv(x)
@@ -33,11 +56,11 @@ class Residual(nn.Module):
     def __init__(self, inp_dim, out_dim):
         super(Residual, self).__init__()
         self.relu = nn.LeakyReLU()
-        self.bn1 = nn.BatchNorm2d(inp_dim)
+        self.bn1 = nn.InstanceNorm2d(inp_dim)
         self.conv1 = Conv(inp_dim, int(out_dim / 2), 1, bn=False, relu=False)
-        self.bn2 = nn.BatchNorm2d(int(out_dim / 2))
+        self.bn2 = nn.InstanceNorm2d(int(out_dim / 2))
         self.conv2 = Conv(int(out_dim / 2), int(out_dim / 2), 3, bn=False, relu=False)
-        self.bn3 = nn.BatchNorm2d(int(out_dim / 2))
+        self.bn3 = nn.InstanceNorm2d(int(out_dim / 2))
         self.conv3 = Conv(int(out_dim / 2), out_dim, 1, bn=False, relu=False)
         self.skip_layer = Conv(inp_dim, out_dim, 1, bn=False, relu=False)
         if inp_dim == out_dim:

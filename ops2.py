@@ -12,8 +12,8 @@ def AbsDetJacobian(batch_meshgrid, device):
         """
     y_c = batch_meshgrid[:, 0, :, :].unsqueeze(1)
     x_c = batch_meshgrid[:, 1, :, :].unsqueeze(1)
-    sobel_x_filter = 1 / 4 * torch.tensor([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]], dtype=torch.float).reshape(1, 1, 3, 3).cuda(device)
-    sobel_y_filter = sobel_x_filter.permute(0, 1, 3, 2).cuda(device)
+    sobel_x_filter = 1 / 4 * torch.tensor([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]], dtype=torch.float, device=device).reshape(1, 1, 3, 3)
+    sobel_y_filter = sobel_x_filter.permute(0, 1, 3, 2)
 
     filtered_y_y = F.conv2d(y_c, sobel_y_filter, stride=1, padding=1)
     filtered_y_x = F.conv2d(y_c, sobel_x_filter, stride=1, padding=1)
@@ -25,21 +25,21 @@ def AbsDetJacobian(batch_meshgrid, device):
     return Det
 
 
-def augm(t, arg):
+def augm(t, arg, device):
     t = K.ColorJitter(arg.brightness, arg.contrast, arg.saturation, arg.hue)(t)
-    random_tensor = 1. - arg.p_flip + torch.rand(size=[1], dtype=t.dtype)
+    random_tensor = 1. - arg.p_flip + torch.rand(size=[1], dtype=t.dtype, device=device)
     binary_tensor = torch.floor(random_tensor)
-    random_tensor, binary_tensor = random_tensor.to(arg.device), binary_tensor.to(arg.device)
+    random_tensor, binary_tensor = random_tensor, binary_tensor
 
     augmented = binary_tensor * t + (1 - binary_tensor) * (1 - t)
     return augmented
 
 
-def prepare_pairs(t_images, arg):
+def prepare_pairs(t_images, arg, device):
     if arg.mode == 'train':
         bn, n_c, w, h = t_images.shape
-        t_c_1_images = augm(t_images, arg)
-        t_c_2_images = augm(t_images, arg)
+        t_c_1_images = augm(t_images, arg, device)
+        t_c_2_images = augm(t_images, arg, device)
 
         if arg.static:
             t_c_1_images = torch.cat([t_c_1_images[:bn // 2].unsqueeze(1), t_c_1_images[bn // 2:].unsqueeze(1)], dim=1)
@@ -88,10 +88,10 @@ def fold_img_with_mu(img, mu, scale, threshold, device, normalize=True):
     py = mu[:, :, 0].unsqueeze(2)
     px = mu[:, :, 1].unsqueeze(2)
 
-    y_t = torch.linspace(-1., 1., h).reshape(h, 1).repeat(1, w)
-    x_t = torch.linspace(-1., 1., w).reshape(1, w).repeat(h, 1)
-    x_t_flat = x_t.reshape(1, 1, -1).to(device)
-    y_t_flat = y_t.reshape(1, 1, -1).to(device)
+    y_t = torch.linspace(-1., 1., h, device=device).reshape(h, 1).repeat(1, w)
+    x_t = torch.linspace(-1., 1., w, device=device).reshape(1, w).repeat(h, 1)
+    x_t_flat = x_t.reshape(1, 1, -1)
+    y_t_flat = y_t.reshape(1, 1, -1)
 
     eps = 1e-6
     y_dist = py - y_t_flat + eps
@@ -127,10 +127,10 @@ def fold_img_with_L_inv(img, mu, L_inv, scale, threshold, device, normalize=True
 
     mu_stop = mu.detach()
 
-    y_t = torch.linspace(-1., 1., h).reshape(h, 1).repeat(1, w)
-    x_t = torch.linspace(-1., 1., w).reshape(1, w).repeat(h, 1)
-    x_t_flat = x_t.reshape(1, 1, -1).to(device)
-    y_t_flat = y_t.reshape(1, 1, -1).to(device)
+    y_t = torch.linspace(-1., 1., h, device=device).reshape(h, 1).repeat(1, w)
+    x_t = torch.linspace(-1., 1., w, device=device).reshape(1, w).repeat(h, 1)
+    x_t_flat = x_t.reshape(1, 1, -1)
+    y_t_flat = y_t.reshape(1, 1, -1)
 
     mesh = torch.cat([y_t_flat, x_t_flat], dim=-2)
     eps = 1e-6

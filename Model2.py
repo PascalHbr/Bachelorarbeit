@@ -6,13 +6,18 @@ from architecture_ops import E, Decoder
 from ops import feat_mu_to_enc, get_local_part_appearances, get_mu_and_prec
 from ops2 import prepare_pairs, AbsDetJacobian, loss_fn
 from transformations import tps_parameters, make_input_tps_param, ThinPlateSpline
+import os
+from torchvision import transforms
+from torchvision.datasets import MNIST
+from torch.utils.data import DataLoader, random_split
+import pytorch_lightning as pl
 
 class Model2(nn.Module):
     def __init__(self, arg):
         super(Model2, self).__init__()
         self.arg = arg
         self.mode = arg.mode
-        self.bn = arg.bn
+        self.bn = arg.batch_size
         self.reconstr_dim = arg.reconstr_dim
         self.n_parts = arg.n_parts
         self.n_features = arg.n_features
@@ -48,7 +53,7 @@ class Model2(nn.Module):
         coord, vector = make_input_tps_param(tps_param_dic)
         coord, vector = coord.to(self.device), vector.to(self.device)
         t_images, t_mesh = ThinPlateSpline(image_orig, coord, vector, self.reconstr_dim, device=self.device)
-        image_in, image_rec = prepare_pairs(t_images, self.arg)
+        image_in, image_rec = prepare_pairs(t_images, self.arg, self.device)
         transform_mesh = F.interpolate(t_mesh, size=64)
         volume_mesh = AbsDetJacobian(transform_mesh, self.device)
 

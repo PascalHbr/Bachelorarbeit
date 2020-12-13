@@ -18,7 +18,7 @@ def main(arg):
     np.random.seed(7)
 
     # Get args
-    bn = arg.bn
+    bn = arg.batch_size
     mode = arg.mode
     name = arg.name
     load_from_ckpt = arg.load_from_ckpt
@@ -49,8 +49,8 @@ def main(arg):
         wandb.watch(model, log='all')
         # Load Datasets and DataLoader
         train_data, test_data = load_deep_fashion_dataset()
-        train_dataset = ImageDataset(np.array(train_data))
-        test_dataset = ImageDataset(np.array(test_data))
+        train_dataset = ImageDataset(train_data)
+        test_dataset = ImageDataset(test_data)
         train_loader = DataLoader(train_dataset, batch_size=bn, shuffle=True, num_workers=4)
         test_loader = DataLoader(test_dataset, batch_size=bn, num_workers=4)
 
@@ -90,7 +90,7 @@ def main(arg):
                     wandb.log({"Training Rec Loss": training_rec_loss})
                     wandb.log({"Training Transform Loss": training_transform_loss})
                     wandb.log({"Training Precision Loss": training_precision_loss})
-                print(f'Epoch: {epoch}, Train Loss: {training_loss}')
+                #print(f'Epoch: {epoch}, Train Loss: {training_loss}')
 
                 # Evaluate on Test Set
                 model.eval()
@@ -104,7 +104,7 @@ def main(arg):
                             loss_log = torch.cat([loss_log, torch.tensor([loss])])
                 evaluation_loss = torch.mean(loss_log)
                 wandb.log({"Evaluation Loss": evaluation_loss})
-                print(f'Epoch: {epoch}, Test Loss: {evaluation_loss}')
+                #print(f'Epoch: {epoch}, Test Loss: {evaluation_loss}')
 
                 # Track Progress & Visualization
                 for step, original in enumerate(test_loader):

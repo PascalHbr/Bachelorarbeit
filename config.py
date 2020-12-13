@@ -4,7 +4,7 @@ import argparse
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--name', default="trial1", type=str, help="name of the experiment", required=True)
-    parser.add_argument('--gpu', default=0, type=int, required=True)
+    parser.add_argument('--gpu', default=None, required=True)
     # run setting
     parser.add_argument('--mode', default='train', choices=['train', 'predict'])
     parser.add_argument('--load_from_ckpt', default=False, type=bool)
@@ -18,9 +18,9 @@ def parse_args():
     parser.add_argument('--reconstr_dim', default=256, type=int, help="dimension of reconstruction")
 
     # modes
-    parser.add_argument('--bn', default=8, type=int,  help="batchsize if not slim and 2 * batchsize if slim")
+    parser.add_argument('--batch_size', default=12, type=int,  help="batchsize if not slim and 2 * batchsize if slim")
     parser.add_argument('--n_parts', default=16, type=int, help="number of parts")
-    parser.add_argument('--n_features', default=64, type=int,  help="neurons of feature map layer")
+    parser.add_argument('--n_features', default=128, type=int,  help="neurons of feature map layer")
     parser.add_argument('--n_c', default=3, type=int)
     parser.add_argument('--residual_dim', default=256, type=int,  help="neurons in residual module of the hourglass")
     parser.add_argument('--depth_s', default=4, type=int, help="depth of shape hourglass")

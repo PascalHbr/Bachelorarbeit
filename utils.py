@@ -1,3 +1,4 @@
+import numpy as np
 import torch
 import matplotlib.pyplot as plt
 import os
@@ -6,6 +7,7 @@ from matplotlib import colors
 from matplotlib.backends.backend_pdf import PdfPages
 from architecture_ops import softmax
 from ops import get_heat_map, get_mu_and_prec
+import cv2
 
 
 def save_model(model, model_save_dir):
@@ -27,29 +29,43 @@ def load_images_from_folder():
     return images
 
 
-def load_deep_fashion_dataset():
+def load_deep_fashion_dataset(stage=None):
     data_folder = "/export/scratch/compvis/datasets/deepfashion_inshop/Img/img/"
     csv_folder = "/export/scratch/compvis/datasets/compvis-datasets/deepfashion_allJointsVisible/"
     train_images = []
     test_images = []
 
-    with open(csv_folder + "data_train.csv") as train_file:
-        train_reader = csv.reader(train_file)
-        next(train_reader)  # ignore first row
-        for row in train_reader:
-            img_path = row[1]
-            img = plt.imread(os.path.join(data_folder, img_path))
-            train_images.append(img)
+    if stage == 'fit' or stage is None:
 
-    with open(csv_folder + "data_test.csv") as test_file:
-        test_reader = csv.reader(test_file)
-        next(test_reader)  # ignore first row
-        for row in test_reader:
-            img_path = row[1]
-            img = plt.imread(os.path.join(data_folder, img_path))
-            test_images.append(img)
+        with open(csv_folder + "data_train.csv") as train_file:
+            train_reader = csv.reader(train_file)
+            next(train_reader)  # ignore first row
+            for row in train_reader:
+                img_path = row[1]
+                img = plt.imread(os.path.join(data_folder, img_path))
+                train_images.append(img)
 
-    return train_images, test_images
+        with open(csv_folder + "data_test.csv") as test_file:
+            test_reader = csv.reader(test_file)
+            next(test_reader)  # ignore first row
+            for row in test_reader:
+                img_path = row[1]
+                img = plt.imread(os.path.join(data_folder, img_path))
+                test_images.append(img)
+
+        return np.array(train_images), np.array(test_images)
+
+    if stage == 'test':
+
+        with open(csv_folder + "data_test.csv") as test_file:
+            test_reader = csv.reader(test_file)
+            next(test_reader)  # ignore first row
+            for row in test_reader:
+                img_path = row[1]
+                img = plt.imread(os.path.join(data_folder, img_path))
+                test_images.append(img)
+
+        return np.array(test_images)
 
 
 def make_visualization(original, original_part_maps, reconstruction, shape_transform, app_transform, fmap_shape,
@@ -67,14 +83,14 @@ def make_visualization(original, original_part_maps, reconstruction, shape_trans
     mu_app, L_inv_app = get_mu_and_prec(fmap_app_norm, device, L_inv_scale)
     heat_map_app = get_heat_map(mu_app, L_inv_app, device)
 
-    overlay_original = visualize_keypoints(original_part_maps, L_inv_scale, device)
+    overlay_original, img_with_marker = visualize_keypoints(original, original_part_maps, L_inv_scale, device)
     cmap = colors.LinearSegmentedColormap.from_list('my_colormap',
                                                     ['white', color_list[0]],
                                                     256)
 
     with PdfPages(directory + str(epoch) + '_summary.pdf') as pdf:
         # Make Head with Overview
-        fig_head, axs_head = plt.subplots(5, 4, figsize=(12, 12))
+        fig_head, axs_head = plt.subplots(6, 4, figsize=(12, 12))
         fig_head.suptitle("Overview", fontsize="x-large")
         axs_head[0, 0].imshow(original[index].permute(1, 2, 0).cpu().detach().numpy())
         axs_head[0, 1].imshow(app_transform[index].permute(1, 2, 0).cpu().detach().numpy())
@@ -94,10 +110,15 @@ def make_visualization(original, original_part_maps, reconstruction, shape_trans
         axs_head[3, 2].imshow(original[2].permute(1, 2, 0).cpu().detach().numpy())
         axs_head[3, 3].imshow(original[3].permute(1, 2, 0).cpu().detach().numpy())
 
-        axs_head[4, 0].imshow(overlay_original[0].cpu().detach().numpy(), cmap=cmap)
-        axs_head[4, 1].imshow(overlay_original[1].cpu().detach().numpy(), cmap=cmap)
-        axs_head[4, 2].imshow(overlay_original[2].cpu().detach().numpy(), cmap=cmap)
-        axs_head[4, 3].imshow(overlay_original[3].cpu().detach().numpy(), cmap=cmap)
+        axs_head[4, 0].imshow(overlay_original[0], cmap=cmap)
+        axs_head[4, 1].imshow(overlay_original[1], cmap=cmap)
+        axs_head[4, 2].imshow(overlay_original[2], cmap=cmap)
+        axs_head[4, 3].imshow(overlay_original[3], cmap=cmap)
+
+        axs_head[5, 0].imshow(img_with_marker[0])
+        axs_head[5, 1].imshow(img_with_marker[1])
+        axs_head[5, 2].imshow(img_with_marker[2])
+        axs_head[5, 3].imshow(img_with_marker[3])
 
         # Part Visualization Shape Stream
         fig_shape, axs_shape = plt.subplots(8, 6, figsize=(8, 8))
@@ -150,10 +171,21 @@ def make_visualization(original, original_part_maps, reconstruction, shape_trans
         plt.close('all')
 
 
-def visualize_keypoints(fmap, L_inv_scale, device):
+def visualize_keypoints(img, fmap, L_inv_scale, device):
+    # Make Heatmap Overlay
     fmap_norm = softmax(fmap)
     mu, L_inv = get_mu_and_prec(fmap_norm, device, L_inv_scale)
     heat_map = get_heat_map(mu, L_inv, device)
-    heat_map_overlay = torch.sum(heat_map, dim=1)
+    heat_map_overlay = torch.sum(heat_map, dim=1).cpu().detach().numpy()
 
-    return heat_map_overlay
+    # Mark Keypoints
+    img, mu = img.permute(0, 2, 3, 1).cpu().detach().numpy(), mu.cpu().detach().numpy()
+    img = np.ascontiguousarray(img)
+    mu_scale = ((mu + 1.) / 2. * img.shape[1])
+    n_parts = mu.shape[1]
+    for i, image in enumerate(img):
+        for k in range(n_parts):
+            cv2.drawMarker(image, (mu_scale[i][k][1], mu_scale[i][k][0]), (1.,0,0), markerType=cv2.MARKER_CROSS,
+                           markerSize=15, thickness=1, line_type=cv2.LINE_AA)
+
+    return heat_map_overlay, img

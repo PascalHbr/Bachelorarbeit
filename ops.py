@@ -16,9 +16,9 @@ def get_mu_and_prec(part_maps, device, L_inv_scal):
         :return: mean calculated on a grid of scale [-1, 1]
         """
     bn, nk, h, w = part_maps.shape
-    y_t = torch.linspace(-1., 1., h).reshape(h, 1).repeat(1, w).unsqueeze(-1)
-    x_t = torch.linspace(-1., 1., w).reshape(1, w).repeat(h, 1).unsqueeze(-1)
-    meshgrid = torch.cat((y_t, x_t), dim=-1).to(device) # 64 x 64 x 2
+    y_t = torch.linspace(-1., 1., h, device=device).reshape(h, 1).repeat(1, w).unsqueeze(-1)
+    x_t = torch.linspace(-1., 1., w, device=device).reshape(1, w).repeat(h, 1).unsqueeze(-1)
+    meshgrid = torch.cat((y_t, x_t), dim=-1) # 64 x 64 x 2
 
     mu = contract('akij, ijl -> akl', part_maps, meshgrid) # bn x nk x 2
     mu_out_prod = contract('akm, akn -> akmn', mu, mu)
@@ -46,10 +46,10 @@ def get_mu_and_prec(part_maps, device, L_inv_scal):
 def get_heat_map(mu, L_inv, device):
     h, w, bn, nk = 64, 64, L_inv.shape[0], L_inv.shape[1]
 
-    y_t = torch.linspace(-1., 1., h).reshape(h, 1).repeat(1, w)
-    x_t = torch.linspace(-1., 1., w).reshape(1, w).repeat(h, 1)
-    x_t_flat = x_t.reshape(1, 1, -1).to(device)
-    y_t_flat = y_t.reshape(1, 1, -1).to(device)
+    y_t = torch.linspace(-1., 1., h, device=device).reshape(h, 1).repeat(1, w)
+    x_t = torch.linspace(-1., 1., w, device=device).reshape(1, w).repeat(h, 1)
+    x_t_flat = x_t.reshape(1, 1, -1)
+    y_t_flat = y_t.reshape(1, 1, -1)
 
     mesh = torch.cat([y_t_flat, x_t_flat], dim=-2)
     eps = 1e-6
@@ -115,19 +115,19 @@ def feat_mu_to_enc(features, mu, L_inv, device, covariance, reconstr_dim, static
         reverse_features = torch.cat([features[bn // 2:], features[:bn // 2]], dim=0)
 
     encoding_list = []
-    circular_precision = range * torch.eye(2).reshape(1, 1, 2, 2).to(dtype=torch.float).repeat(bn, nk, 1, 1).to(device)
+    circular_precision = range * torch.eye(2, device=device).reshape(1, 1, 2, 2).to(dtype=torch.float).repeat(bn, nk, 1, 1)
 
 
     for dims, part_depth, feat_slice in zip(reconstruct_stages, part_depths, feat_map_depths):
         h, w = dims[0], dims[1]
 
-        y_t = torch.linspace(-1., 1., h).reshape(h, 1).repeat(1, w).unsqueeze(-1)
-        x_t = torch.linspace(-1., 1., w).reshape(1, w).repeat(h, 1).unsqueeze(-1)
+        y_t = torch.linspace(-1., 1., h, device=device).reshape(h, 1).repeat(1, w).unsqueeze(-1)
+        x_t = torch.linspace(-1., 1., w, device=device).reshape(1, w).repeat(h, 1).unsqueeze(-1)
 
         y_t_flat = y_t.reshape(1, 1, 1, -1)
         x_t_flat = x_t.reshape(1, 1, 1, -1)
 
-        mesh = torch.cat((y_t_flat, x_t_flat), dim=-2).to(device)
+        mesh = torch.cat((y_t_flat, x_t_flat), dim=-2)
         eps = 1e-6
         dist = mesh - mu.unsqueeze(-1) + eps
 
@@ -215,10 +215,10 @@ def fold_img_with_mu(img, mu, scale, threshold, device, normalize=True):
     py = mu[:, :, 0].unsqueeze(2)
     px = mu[:, :, 1].unsqueeze(2)
 
-    y_t = torch.linspace(-1., 1., h).reshape(h, 1).repeat(1, w)
-    x_t = torch.linspace(-1., 1., w).reshape(1, w).repeat(h, 1)
-    x_t_flat = x_t.reshape(1, 1, -1).to(device)
-    y_t_flat = y_t.reshape(1, 1, -1).to(device)
+    y_t = torch.linspace(-1., 1., h, device=device).reshape(h, 1).repeat(1, w)
+    x_t = torch.linspace(-1., 1., w, device=device).reshape(1, w).repeat(h, 1)
+    x_t_flat = x_t.reshape(1, 1, -1)
+    y_t_flat = y_t.reshape(1, 1, -1)
 
     eps = 1e-6
     y_dist = py - y_t_flat + eps
@@ -254,10 +254,10 @@ def fold_img_with_L_inv(img, mu, L_inv, scale, threshold, device, normalize=True
 
     mu_stop = mu.detach()
 
-    y_t = torch.linspace(-1., 1., h).reshape(h, 1).repeat(1, w)
-    x_t = torch.linspace(-1., 1., w).reshape(1, w).repeat(h, 1)
-    x_t_flat = x_t.reshape(1, 1, -1).to(device)
-    y_t_flat = y_t.reshape(1, 1, -1).to(device)
+    y_t = torch.linspace(-1., 1., h, device=device).reshape(h, 1).repeat(1, w)
+    x_t = torch.linspace(-1., 1., w, device=device).reshape(1, w).repeat(h, 1)
+    x_t_flat = x_t.reshape(1, 1, -1)
+    y_t_flat = y_t.reshape(1, 1, -1)
 
     mesh = torch.cat([y_t_flat, x_t_flat], dim=-2)
     eps = 1e-6
@@ -283,8 +283,8 @@ def fold_img_with_L_inv(img, mu, L_inv, scale, threshold, device, normalize=True
 
 def normalize(image):
     bn, kn, h, w = image.shape
-    image = image.view(bn, kn, -1)
+    image = image.reshape(bn, kn, -1)
     image -= image.min(2, keepdim=True)[0]
     image /= image.max(2, keepdim=True)[0]
-    image = image.view(bn, kn, h, w)
+    image = image.reshape(bn, kn, h, w)
     return image

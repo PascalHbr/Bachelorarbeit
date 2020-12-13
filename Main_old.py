@@ -4,7 +4,7 @@ from utils import save_model, load_model, load_deep_fashion_dataset, make_visual
 from Model_old import Model
 from config import parse_args, write_hyperparameters
 from dotmap import DotMap
-from ops import normalize
+from ops_old import normalize
 import os
 import numpy as np
 from transformations import tps_parameters, make_input_tps_param, ThinPlateSpline

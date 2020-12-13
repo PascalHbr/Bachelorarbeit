@@ -6,7 +6,7 @@ import csv
 from matplotlib import colors
 from matplotlib.backends.backend_pdf import PdfPages
 from architecture_ops import softmax
-from ops import get_heat_map, get_mu_and_prec
+from ops_old import get_heat_map, get_mu_and_prec
 import cv2
 
 

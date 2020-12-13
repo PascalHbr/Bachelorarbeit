@@ -3,18 +3,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 from opt_einsum import contract
 from architecture_ops import E, Decoder
-from ops import feat_mu_to_enc, get_local_part_appearances, get_mu_and_prec
-from ops2 import prepare_pairs, AbsDetJacobian, loss_fn
+from ops import prepare_pairs, AbsDetJacobian, feat_mu_to_enc, get_local_part_appearances, get_mu_and_prec, loss_fn
 from transformations import tps_parameters, make_input_tps_param, ThinPlateSpline
-import os
-from torchvision import transforms
-from torchvision.datasets import MNIST
-from torch.utils.data import DataLoader, random_split
-import pytorch_lightning as pl
 
-class Model2(nn.Module):
+
+class Model(nn.Module):
     def __init__(self, arg):
-        super(Model2, self).__init__()
+        super(Model, self).__init__()
         self.arg = arg
         self.mode = arg.mode
         self.bn = arg.batch_size

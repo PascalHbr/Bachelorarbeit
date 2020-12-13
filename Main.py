@@ -1,13 +1,11 @@
 import torch
 from DataLoader import ImageDataset, DataLoader
 from utils import save_model, load_model, load_deep_fashion_dataset, make_visualization
-from Model import Model2
+from Model import Model
 from config import parse_args, write_hyperparameters
 from dotmap import DotMap
 import os
 import numpy as np
-from transformations import tps_parameters, make_input_tps_param, ThinPlateSpline
-import kornia.augmentation as K
 import wandb
 
 
@@ -39,7 +37,7 @@ def main(arg):
         write_hyperparameters(arg.toDict(), model_save_dir)
 
         # Define Model & Optimizer
-        model = Model2(arg).to(device)
+        model = Model(arg).to(device)
         if load_from_ckpt:
             model = load_model(model, model_save_dir, device).to(device)
         optimizer = torch.optim.Adam(model.parameters(), lr=lr)
@@ -128,7 +126,7 @@ def main(arg):
             os.makedirs(prediction_save_dir)
 
         # Load Model and Dataset
-        model = Model2(arg).to(device)
+        model = Model(arg).to(device)
         model = load_model(model, model_save_dir, device)
         train_data, test_data = load_deep_fashion_dataset()
         test_dataset = ImageDataset(np.array(test_data))

@@ -5,8 +5,8 @@ from torch.utils.data import DataLoader
 from torchvision import transforms
 from opt_einsum import contract
 from architecture_ops import E, Decoder
-from ops import feat_mu_to_enc, get_local_part_appearances, get_mu_and_prec
-from ops2 import prepare_pairs, AbsDetJacobian, loss_fn
+from ops_old import feat_mu_to_enc, get_local_part_appearances, get_mu_and_prec
+from ops import prepare_pairs, AbsDetJacobian, loss_fn
 from transformations import tps_parameters, make_input_tps_param, ThinPlateSpline
 from utils import load_deep_fashion_dataset
 from config import parse_args

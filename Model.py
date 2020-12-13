@@ -1,66 +1,27 @@
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
-from DataLoader import ImageDataset
-from torch.utils.data import DataLoader
-from torchvision import transforms
 from opt_einsum import contract
 from architecture_ops import E, Decoder
 from ops import feat_mu_to_enc, get_local_part_appearances, get_mu_and_prec
 from ops2 import prepare_pairs, AbsDetJacobian, loss_fn
 from transformations import tps_parameters, make_input_tps_param, ThinPlateSpline
-from utils import load_deep_fashion_dataset
-from config import parse_args
-from dotmap import DotMap
+import os
+from torchvision import transforms
+from torchvision.datasets import MNIST
+from torch.utils.data import DataLoader, random_split
 import pytorch_lightning as pl
-from pytorch_lightning import Trainer, seed_everything
-from pytorch_lightning.callbacks import Callback, ModelCheckpoint, LearningRateMonitor
-from pytorch_lightning.loggers import WandbLogger
 
-class PrintCallback(Callback):
-    def on_train_start(self, trainer, pl_module):
-        print("Training is started!")
-    def on_train_end(self, trainer, pl_module):
-        print("Training is done.")
-
-class DeepFashionDataModule(pl.LightningDataModule):
-
+class Model2(nn.Module):
     def __init__(self, arg):
-        super().__init__()
-        self.transform = transforms.ToTensor()
-        self.batch_size = arg.batch_size
-
-    def setup(self, stage=None):
-        # Assign train/val datasets for use in dataloaders
-        if stage == 'fit' or stage is None:
-            self.train_data, self.val_data = load_deep_fashion_dataset(stage)
-            self.train_dataset, self.val_dataset = ImageDataset(self.train_data), ImageDataset(self.val_data)
-
-        if stage == 'test':
-            self.test_data = load_deep_fashion_dataset(stage)
-            self.test_dataset = ImageDataset(self.test_data)
-
-    def train_dataloader(self):
-        return DataLoader(self.train_dataset, batch_size=self.batch_size, num_workers=4)
-
-    def val_dataloader(self):
-        return DataLoader(self.val_dataset, batch_size=self.batch_size, num_workers=4)
-
-    def test_dataloader(self):
-        return DataLoader(self.test_dataset, batch_size=self.batch_size, num_workers=4)
-
-
-class Model(pl.LightningModule):
-
-    def __init__(self, arg):
-        super().__init__()
+        super(Model2, self).__init__()
         self.arg = arg
         self.mode = arg.mode
-        self.batch_size = arg.batch_size
-        self.lr = arg.lr
+        self.bn = arg.batch_size
         self.reconstr_dim = arg.reconstr_dim
         self.n_parts = arg.n_parts
         self.n_features = arg.n_features
-        #self.device = arg.device
+        self.device = arg.device
         self.depth_s = arg.depth_s
         self.depth_a = arg.depth_a
         self.p_dropout = arg.p_dropout
@@ -125,48 +86,3 @@ class Model(pl.LightningModule):
 
         elif self.mode == 'train':
             return image_rec, reconstruct_same_id, total_loss, rec_loss, transform_loss, precision_loss, mu, L_inv
-
-    def training_step(self, batch, batch_idx):
-        image_rec, reconstruct_same_id, loss, rec_loss, transform_loss, precision_loss, mu, L_inv = self(batch)
-        self.log('my_loss', loss, on_step=True, on_epoch=False, prog_bar=True, logger=True)
-        return loss
-
-    def validation_step(self, batch, batch_idx):
-        image_rec, reconstruct_same_id, val_loss, rec_loss, transform_loss, precision_loss, mu, L_inv = self(batch)
-        self.log('my_loss', val_loss, on_step=True, on_epoch=False, prog_bar=True, logger=True)
-        return val_loss
-
-    def test_step(self, batch, batch_idx):
-        image_rec, reconstruct_same_id, loss, rec_loss, transform_loss, precision_loss, mu, L_inv = self(batch)
-        return loss
-
-    def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
-        return optimizer
-
-
-def main(arg):
-    seed_everything(42)
-    lr_monitor = LearningRateMonitor(logging_interval='step')
-    callbacks = [PrintCallback(), lr_monitor]
-    logger = WandbLogger(name=arg.name, save_dir='../results/' + arg.name, )
-    trainer = Trainer(gpus=arg.gpu,
-                      deterministic=True,
-                      benchmark=False,
-                      callbacks=callbacks,
-                      checkpoint_callback=False,
-                      logger=logger,
-                      max_epochs=1000,
-                      precision=32,
-                      weights_save_path='../results/' + arg.name,
-                      weights_summary=None
-                      )
-    dm = DeepFashionDataModule(arg)
-    model = Model(arg)
-    trainer.tune(model, dm)
-    trainer.fit(model, dm)
-
-
-if __name__ == '__main__':
-    arg = DotMap(vars(parse_args()))
-    main(arg)

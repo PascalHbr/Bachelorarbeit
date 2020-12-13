@@ -33,52 +33,51 @@ def load_images_from_folder():
 def load_deep_fashion_dataset(stage=None):
     data_folder = "/export/scratch/compvis/datasets/deepfashion_inshop/Img/img/"
     csv_folder = "/export/scratch/compvis/datasets/compvis-datasets/deepfashion_allJointsVisible/"
-    annotations = "/export/scratch/compvis/datasets/compvis-datasets/deepfashion_keypoints/data/annotations.json"
+    annotations = "/export/scratch/compvis/datasets/compvis-datasets/deepfashion_allJointsVisible/"
     train_images = []
     test_images = []
     mus_train = []
     mus_test = []
 
     if stage == 'fit' or stage is None:
-
-        with open(csv_folder + "data_train.csv") as train_file:
-            train_reader = csv.reader(train_file)
-            next(train_reader)  # ignore first row
-            for row in train_reader:
-                img_path = row[1]
-                img = plt.imread(os.path.join(data_folder, img_path))
-                train_images.append(img)
-                with open(annotations) as df:
-                    data = json.load(df)
-                    mu = next(image["keypoints"] for image in data if image['image_path'] == img_path)
+        with open(annotations + 'data_train.json') as df:
+            data = json.load(df)
+            with open(csv_folder + "data_train.csv") as train_file:
+                train_reader = csv.reader(train_file)
+                next(train_reader)  # ignore first row
+                for i, row in enumerate(train_reader):
+                    img_path = row[1]
+                    img = plt.imread(os.path.join(data_folder, img_path))
+                    train_images.append(img)
+                    mu = data[i]['keypoints']
                     mus_train.append(mu)
 
-        with open(csv_folder + "data_test.csv") as test_file:
-            test_reader = csv.reader(test_file)
-            next(test_reader)  # ignore first row
-            for row in test_reader:
-                img_path = row[1]
-                img = plt.imread(os.path.join(data_folder, img_path))
-                test_images.append(img)
-                with open(annotations) as df:
-                    data = json.load(df)
-                    mu = next(image["keypoints"] for image in data if image['image_path'] == img_path)
+        with open(annotations + 'data_test.json') as df:
+            data = json.load(df)
+            with open(csv_folder + "data_test.csv") as test_file:
+                test_reader = csv.reader(test_file)
+                next(test_reader)  # ignore first row
+                for i, row in enumerate(test_reader):
+                    img_path = row[1]
+                    img = plt.imread(os.path.join(data_folder, img_path))
+                    test_images.append(img)
+                    mu = data[i]['keypoints']
                     mus_test.append(mu)
 
         return np.array(train_images), np.array(test_images), np.array(mus_train), np.array(mus_test)
 
     if stage == 'test':
 
-        with open(csv_folder + "data_test.csv") as test_file:
-            test_reader = csv.reader(test_file)
-            next(test_reader)  # ignore first row
-            for row in test_reader:
-                img_path = row[1]
-                img = plt.imread(os.path.join(data_folder, img_path))
-                test_images.append(img)
-                with open(annotations) as df:
-                    data = json.load(df)
-                    mu = next(image["keypoints"] for image in data if image['image_path'] == img_path)
+        with open(annotations + 'data_test.json') as df:
+            data = json.load(df)
+            with open(csv_folder + "data_test.csv") as test_file:
+                test_reader = csv.reader(test_file)
+                next(test_reader)  # ignore first row
+                for i, row in enumerate(test_reader):
+                    img_path = row[1]
+                    img = plt.imread(os.path.join(data_folder, img_path))
+                    test_images.append(img)
+                    mu = data[i]['keypoints']
                     mus_test.append(mu)
 
         return np.array(test_images), np.array(mus_test)
@@ -197,7 +196,7 @@ def visualize_keypoints(img, fmap, L_inv_scale, device):
     # Mark Keypoints
     img, mu = img.permute(0, 2, 3, 1).cpu().detach().numpy(), mu.cpu().detach().numpy()
     img = np.ascontiguousarray(img)
-    mu_scale = ((mu + 1.) / 2. * img.shape[1])
+    mu_scale = (mu + 1.) / 2. * img.shape[1]
     n_parts = mu.shape[1]
     for i, image in enumerate(img):
         for k in range(n_parts):
@@ -207,6 +206,23 @@ def visualize_keypoints(img, fmap, L_inv_scale, device):
     return heat_map_overlay, img
 
 
+def keypoint_metric(prediction, ground_truth, image_size=256):
+    bn, nk, _ = prediction.shape
+    prediction = ((prediction + 1.) / 2. * image_size).float()
+    ground_truth = ground_truth[:, 0].float()
+    distances = torch.zeros(1)
+    for i in range(nk):
+        best_distance = 1e7
+        for j in range(nk):
+            distance = torch.mean(torch.cdist(prediction[:, j], ground_truth[:, i], p=2.0))
+            if distance < best_distance:
+                best_distance = distance
+        distances += best_distance
+    distance_norm = distances / (nk * image_size)
+
+    return distance_norm
+
+
 if __name__ == '__main__':
-    train_data, test_data, train_keypoints, test_keypoints = load_deep_fashion_dataset()
-    print(len(train_keypoints))
+    test_data, test_keypoints = load_deep_fashion_dataset('test')
+    print(test_keypoints.shape)

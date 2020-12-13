@@ -1,6 +1,6 @@
 import torch
 from DataLoader import ImageDataset, DataLoader
-from utils import save_model, load_model, load_deep_fashion_dataset, make_visualization
+from utils import save_model, load_model, load_deep_fashion_dataset, make_visualization, keypoint_metric
 from Model import Model
 from config import parse_args, write_hyperparameters
 from dotmap import DotMap
@@ -53,16 +53,17 @@ def main(arg):
         test_loader = DataLoader(test_dataset, batch_size=bn, num_workers=4)
 
         # Make Training
-        with torch.autograd.set_detect_anomaly(True):
+        with torch.autograd.set_detect_anomaly(False):
             for epoch in range(epochs+1):
                 # Train on Train Set
                 model.train()
                 model.mode = 'train'
                 for step, (original, keypoints) in enumerate(train_loader):
-                    original = original.to(device)
-                    image_rec, reconstruct_same_id, loss, rec_loss, transform_loss, precision_loss, mu, L_inv = model(original)
+                    original, keypoints = original.to(device), keypoints.to(device)
+                    image_rec, reconstruct_same_id, loss, rec_loss, transform_loss, precision_loss, mu, L_inv, mu_original = model(original)
                     mu_norm = torch.mean(torch.norm(mu, p=1, dim=2)).cpu().detach().numpy()
                     L_inv_norm = torch.mean(torch.linalg.norm(L_inv, ord='fro', dim=[2, 3])).cpu().detach().numpy()
+                    # Track Mean and Precision Matrix
                     wandb.log({"Part Means": mu_norm})
                     wandb.log({"Precision Matrix": L_inv_norm})
                     # Zero out gradients
@@ -70,46 +71,31 @@ def main(arg):
                     loss.backward()
                     optimizer.step()
                     # Track Loss
-                    if step == 0:
-                        loss_log = torch.tensor([loss])
-                        rec_loss_log = torch.tensor([rec_loss])
-                        transform_loss_log = torch.tensor([transform_loss])
-                        precision_loss_log = torch.tensor([precision_loss])
-                    else:
-                        loss_log = torch.cat([loss_log, torch.tensor([loss])])
-                        rec_loss_log = torch.cat([rec_loss_log, torch.tensor([rec_loss])])
-                        transform_loss_log = torch.cat([transform_loss_log, torch.tensor([transform_loss])])
-                        precision_loss_log = torch.cat([precision_loss_log, torch.tensor([precision_loss])])
-                    training_loss = torch.mean(loss_log)
-                    training_rec_loss = torch.mean(rec_loss_log)
-                    training_transform_loss = torch.mean(transform_loss_log)
-                    training_precision_loss = torch.mean(precision_loss_log)
-                    wandb.log({"Training Loss": training_loss})
-                    wandb.log({"Training Rec Loss": training_rec_loss})
-                    wandb.log({"Training Transform Loss": training_transform_loss})
-                    wandb.log({"Training Precision Loss": training_precision_loss})
-                #print(f'Epoch: {epoch}, Train Loss: {training_loss}')
+                    wandb.log({"Training Loss": loss})
+                    # wandb.log({"Training Rec Loss": rec_loss})
+                    # wandb.log({"Training Transform Loss": transform_loss})
+                    # wandb.log({"Training Precision Loss": precision_loss})
+                    # Track Metric
+                    score = keypoint_metric(mu_original, keypoints)
+                    wandb.log({"Metric Train": score})
 
                 # Evaluate on Test Set
                 model.eval()
-                for step, original in enumerate(test_loader):
+                for step, (original, keypoints) in enumerate(test_loader):
                     with torch.no_grad():
-                        original = original.to(device)
-                        image_rec, reconstruct_same_id, loss, rec_loss, transform_loss, precision_loss, mu, L_inv = model(original)
-                        if step == 0:
-                            loss_log = torch.tensor([loss])
-                        else:
-                            loss_log = torch.cat([loss_log, torch.tensor([loss])])
-                evaluation_loss = torch.mean(loss_log)
-                wandb.log({"Evaluation Loss": evaluation_loss})
-                #print(f'Epoch: {epoch}, Test Loss: {evaluation_loss}')
+                        original, keypoints = original.to(device), keypoints.to(device)
+                        image_rec, reconstruct_same_id, loss, rec_loss, transform_loss, precision_loss, mu, L_inv, mu_original = model(original)
+                        # Track Loss and Metric
+                        wandb.log({"Evaluation Loss": loss})
+                        score = keypoint_metric(mu_original, keypoints)
+                        wandb.log({"Metric Validation": score})
 
                 # Track Progress & Visualization
-                for step, original in enumerate(test_loader):
+                for step, (original, keypoints) in enumerate(test_loader):
                     with torch.no_grad():
                         model.mode = 'predict'
-                        original = original.to(device)
-                        original_part_maps, image_rec, part_maps, part_maps, reconstruct_same_id = model(original)
+                        original, keypoints = original.to(device), keypoints.to(device)
+                        original_part_maps, mu_original, image_rec, part_maps, part_maps, reconstruct_same_id = model(original)
                         make_visualization(original, original_part_maps, reconstruct_same_id, image_rec[:original.shape[0]],
                                            image_rec[original.shape[0]:], part_maps[original.shape[0]:],
                                            part_maps[:original.shape[0]], L_inv_scal, model_save_dir + '/summary/', epoch, device)
@@ -137,8 +123,8 @@ def main(arg):
         # Predict on Dataset
         for step, (original, keypoints) in enumerate(test_loader):
             with torch.no_grad():
-                original = original.to(device)
-                original_part_maps, image_rec, part_maps, part_maps, reconstruct_same_id = model(original)
+                original, keypoints = original.to(device), keypoints.to(device)
+                original_part_maps, mu_original, image_rec, part_maps, part_maps, reconstruct_same_id = model(original)
                 make_visualization(original, original_part_maps, reconstruct_same_id, image_rec[:original.shape[0]],
                                    image_rec[original.shape[0]:], part_maps[original.shape[0]:],
                                    part_maps[:original.shape[0]], L_inv_scal, prediction_save_dir, 0, device)

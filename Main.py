@@ -1,5 +1,5 @@
 import torch
-from DataLoader import ImageDataset, DataLoader
+from Dataloader import ImageDataset, DataLoader, Human3MDataset
 from utils import save_model, load_model, load_deep_fashion_dataset, make_visualization, keypoint_metric
 from Model import Model
 from config import parse_args, write_hyperparameters
@@ -14,6 +14,9 @@ def main(arg):
     torch.manual_seed(7)
     torch.cuda.manual_seed(7)
     np.random.seed(7)
+    torch.backends.cudnn.deterministic = True
+    torch.manual_seed(7)
+    rng = np.random.RandomState(7)
 
     # Get args
     bn = arg.batch_size
@@ -46,9 +49,10 @@ def main(arg):
         wandb.init(project='Disentanglement', config=arg, name=arg.name)
         wandb.watch(model, log='all')
         # Load Datasets and DataLoader
-        train_data, test_data, train_keypoints, test_keypoints = load_deep_fashion_dataset()
-        train_dataset = ImageDataset(train_data, train_keypoints)
-        test_dataset = ImageDataset(test_data, test_keypoints)
+        train_dataset = ImageDataset(size=arg.reconstr_dim, train=True)
+        test_dataset = ImageDataset(size=arg.reconstr_dim, train=False)
+        # train_dataset = Human3MDataset(size=arg.reconstr_dim, train=True)
+        # test_dataset = Human3MDataset(size=arg.reconstr_dim, train=False)
         train_loader = DataLoader(train_dataset, batch_size=bn, shuffle=True, num_workers=4)
         test_loader = DataLoader(test_dataset, batch_size=bn, num_workers=4)
 
@@ -76,8 +80,8 @@ def main(arg):
                     # wandb.log({"Training Transform Loss": transform_loss})
                     # wandb.log({"Training Precision Loss": precision_loss})
                     # Track Metric
-                    score = keypoint_metric(mu_original, keypoints)
-                    wandb.log({"Metric Train": score})
+                    # score = keypoint_metric(mu_original, keypoints)
+                    # wandb.log({"Metric Train": score})
 
                 # Evaluate on Test Set
                 model.eval()
@@ -87,8 +91,8 @@ def main(arg):
                         image_rec, reconstruct_same_id, loss, rec_loss, transform_loss, precision_loss, mu, L_inv, mu_original = model(original)
                         # Track Loss and Metric
                         wandb.log({"Evaluation Loss": loss})
-                        score = keypoint_metric(mu_original, keypoints)
-                        wandb.log({"Metric Validation": score})
+                        # score = keypoint_metric(mu_original, keypoints)
+                        # wandb.log({"Metric Validation": score})
 
                 # Track Progress & Visualization
                 for step, (original, keypoints) in enumerate(test_loader):
@@ -96,9 +100,9 @@ def main(arg):
                         model.mode = 'predict'
                         original, keypoints = original.to(device), keypoints.to(device)
                         original_part_maps, mu_original, image_rec, part_maps, part_maps, reconstruct_same_id = model(original)
-                        make_visualization(original, original_part_maps, reconstruct_same_id, image_rec[:original.shape[0]],
-                                           image_rec[original.shape[0]:], part_maps[original.shape[0]:],
-                                           part_maps[:original.shape[0]], L_inv_scal, model_save_dir + '/summary/', epoch, device)
+                        make_visualization(original, original_part_maps, keypoints, reconstruct_same_id, image_rec[:original.shape[0]],
+                                           image_rec[original.shape[0]:], part_maps[original.shape[0]:], part_maps[:original.shape[0]],
+                                           L_inv_scal, model_save_dir + '/summary/', epoch, device, show_labels=False)
                         save_model(model, model_save_dir)
 
                         if step == 0:
@@ -114,8 +118,8 @@ def main(arg):
         # Load Model and Dataset
         model = Model(arg).to(device)
         model = load_model(model, model_save_dir, device)
-        train_data, test_data, train_keypoints, test_keypoints = load_deep_fashion_dataset()
-        test_dataset = ImageDataset(test_data, test_keypoints)
+        test_dataset = ImageDataset(size=arg.reconstr_dim, train=False)
+        # test_dataset = Human3MDataset(size=arg.reconstr_dim, train=False)
         test_loader = DataLoader(test_dataset, shuffle=True, batch_size=bn, num_workers=4)
         model.mode = 'predict'
         model.eval()
@@ -125,9 +129,12 @@ def main(arg):
             with torch.no_grad():
                 original, keypoints = original.to(device), keypoints.to(device)
                 original_part_maps, mu_original, image_rec, part_maps, part_maps, reconstruct_same_id = model(original)
-                make_visualization(original, original_part_maps, reconstruct_same_id, image_rec[:original.shape[0]],
-                                   image_rec[original.shape[0]:], part_maps[original.shape[0]:],
-                                   part_maps[:original.shape[0]], L_inv_scal, prediction_save_dir, 0, device)
+                make_visualization(original, original_part_maps, keypoints, reconstruct_same_id, image_rec[:original.shape[0]],
+                                   image_rec[original.shape[0]:], part_maps[original.shape[0]:], part_maps[:original.shape[0]],
+                                   L_inv_scal, prediction_save_dir, 0, device, show_labels=True)
+                # Track Metric
+                score = keypoint_metric(mu_original, keypoints)
+                print(score)
                 if step == 0:
                     break
 

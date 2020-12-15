@@ -1,14 +1,11 @@
 import numpy as np
 import torch
 import matplotlib.pyplot as plt
-import os
-import csv
 from matplotlib import colors
 from matplotlib.backends.backend_pdf import PdfPages
 from architecture import softmax
 from ops import get_heat_map, get_mu_and_prec
 import cv2
-import json
 
 
 def save_model(model, model_save_dir):
@@ -20,71 +17,8 @@ def load_model(model, model_save_dir, device):
     return model
 
 
-def load_images_from_folder():
-    folder = "/export/scratch/compvis/datasets/deepfashion_vunet/train"
-    images = []
-    for i, filename in enumerate(os.listdir(folder)):
-        img = plt.imread(os.path.join(folder, filename))
-        if img is not None:
-            images.append(img)
-    return images
-
-
-def load_deep_fashion_dataset(stage=None):
-    data_folder = "/export/scratch/compvis/datasets/deepfashion_inshop/Img/img/"
-    csv_folder = "/export/scratch/compvis/datasets/compvis-datasets/deepfashion_allJointsVisible/"
-    annotations = "/export/scratch/compvis/datasets/compvis-datasets/deepfashion_allJointsVisible/"
-    train_images = []
-    test_images = []
-    mus_train = []
-    mus_test = []
-
-    if stage == 'fit' or stage is None:
-        with open(annotations + 'data_train.json') as df:
-            data = json.load(df)
-            with open(csv_folder + "data_train.csv") as train_file:
-                train_reader = csv.reader(train_file)
-                next(train_reader)  # ignore first row
-                for i, row in enumerate(train_reader):
-                    img_path = row[1]
-                    img = plt.imread(os.path.join(data_folder, img_path))
-                    train_images.append(img)
-                    mu = data[i]['keypoints']
-                    mus_train.append(mu)
-
-        with open(annotations + 'data_test.json') as df:
-            data = json.load(df)
-            with open(csv_folder + "data_test.csv") as test_file:
-                test_reader = csv.reader(test_file)
-                next(test_reader)  # ignore first row
-                for i, row in enumerate(test_reader):
-                    img_path = row[1]
-                    img = plt.imread(os.path.join(data_folder, img_path))
-                    test_images.append(img)
-                    mu = data[i]['keypoints']
-                    mus_test.append(mu)
-
-        return np.array(train_images), np.array(test_images), np.array(mus_train), np.array(mus_test)
-
-    if stage == 'test':
-
-        with open(annotations + 'data_test.json') as df:
-            data = json.load(df)
-            with open(csv_folder + "data_test.csv") as test_file:
-                test_reader = csv.reader(test_file)
-                next(test_reader)  # ignore first row
-                for i, row in enumerate(test_reader):
-                    img_path = row[1]
-                    img = plt.imread(os.path.join(data_folder, img_path))
-                    test_images.append(img)
-                    mu = data[i]['keypoints']
-                    mus_test.append(mu)
-
-        return np.array(test_images), np.array(mus_test)
-
-
-def make_visualization(original, original_part_maps, reconstruction, shape_transform, app_transform, fmap_shape,
-                       fmap_app, L_inv_scale, directory, epoch, device, index=0):
+def make_visualization(original, original_part_maps, labels, reconstruction, shape_transform, app_transform, fmap_shape,
+                       fmap_app, L_inv_scale, directory, epoch, device, index=0, show_labels=True):
 
     # Color List for Parts
     color_list = ['black', 'gray', 'brown', 'chocolate', 'orange', 'gold', 'olive', 'lawngreen', 'aquamarine',
@@ -98,7 +32,8 @@ def make_visualization(original, original_part_maps, reconstruction, shape_trans
     mu_app, L_inv_app = get_mu_and_prec(fmap_app_norm, device, L_inv_scale)
     heat_map_app = get_heat_map(mu_app, L_inv_app, device)
 
-    overlay_original, img_with_marker = visualize_keypoints(original, original_part_maps, L_inv_scale, device)
+    overlay_original, img_with_marker = visualize_keypoints(original, original_part_maps, labels, L_inv_scale, device,
+                                                            show_labels)
     cmap = colors.LinearSegmentedColormap.from_list('my_colormap',
                                                     ['white', color_list[0]],
                                                     256)
@@ -186,7 +121,7 @@ def make_visualization(original, original_part_maps, reconstruction, shape_trans
         plt.close('all')
 
 
-def visualize_keypoints(img, fmap, L_inv_scale, device):
+def visualize_keypoints(img, fmap, labels, L_inv_scale, device, show_labels):
     # Make Heatmap Overlay
     fmap_norm = softmax(fmap)
     mu, L_inv = get_mu_and_prec(fmap_norm, device, L_inv_scale)
@@ -197,19 +132,26 @@ def visualize_keypoints(img, fmap, L_inv_scale, device):
     img, mu = img.permute(0, 2, 3, 1).cpu().detach().numpy(), mu.cpu().detach().numpy()
     img = np.ascontiguousarray(img)
     mu_scale = (mu + 1.) / 2. * img.shape[1]
+    labels = labels[:, 0].cpu().detach().numpy()
     n_parts = mu.shape[1]
+    n_labels = labels.shape[1]
     for i, image in enumerate(img):
         for k in range(n_parts):
-            cv2.drawMarker(image, (mu_scale[i][k][1], mu_scale[i][k][0]), (1.,0,0), markerType=cv2.MARKER_CROSS,
-                           markerSize=15, thickness=1, line_type=cv2.LINE_AA)
+            cv2.drawMarker(image, (int(mu_scale[i][k][1]), int(mu_scale[i][k][0])), (1., 0, 0),
+                           markerType=cv2.MARKER_CROSS, markerSize=15, thickness=1, line_type=cv2.LINE_AA)
+
+        if show_labels:
+            for n in range(n_labels):
+                cv2.drawMarker(image, (int(labels[i][n][1]), int(labels[i][n][0])), (0, 1., 0),
+                               markerType=cv2.MARKER_CROSS, markerSize=15, thickness=1, line_type=cv2.LINE_AA)
 
     return heat_map_overlay, img
 
 
 def keypoint_metric(prediction, ground_truth, image_size=256):
     bn, nk, _ = prediction.shape
-    prediction = ((prediction + 1.) / 2. * image_size).float()
-    ground_truth = ground_truth[:, 0].float()
+    prediction = ((prediction + 1.) / 2. * image_size).float().cpu()
+    ground_truth = ground_truth[:, 0].float().cpu()
     distances = torch.zeros(1)
     for i in range(nk):
         best_distance = 1e7
@@ -224,5 +166,4 @@ def keypoint_metric(prediction, ground_truth, image_size=256):
 
 
 if __name__ == '__main__':
-    test_data, test_keypoints = load_deep_fashion_dataset('test')
-    print(test_keypoints.shape)
+    pass

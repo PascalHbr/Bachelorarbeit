@@ -670,7 +670,7 @@ class Model(nn.Module):
 
 
 import torch
-from DataLoader import ImageDataset, DataLoader
+from Dataloader import ImageDataset, DataLoader
 from utils import save_model, load_model, load_deep_fashion_dataset, make_visualization
 from Model_old import Model
 from config import parse_args, write_hyperparameters

@@ -1,6 +1,6 @@
 import torch
 import torch.nn.functional as F
-from DataLoader import ImageDataset
+from Dataloader import ImageDataset
 from torch.utils.data import DataLoader
 from torchvision import transforms
 from opt_einsum import contract

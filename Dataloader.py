@@ -11,7 +11,7 @@ import numpy as np
 
 class DeepFashionDataset(Dataset):
     def __init__(self, size, train=True):
-        super(DeepFashion, self).__init__()
+        super(DeepFashionDataset, self).__init__()
         self.size = size
         self.train = train
         self.basepath = "/export/scratch/compvis/datasets/deepfashion_inshop/Img/img/"
@@ -22,7 +22,7 @@ class DeepFashionDataset(Dataset):
         else:
             subdir_name = "test"
         self.img_path = pd.read_csv(os.path.join(self.csv_path + subdir_name + ".csv"))['filename'].tolist()
-        self.keypoints = np.array(pd.read_json(os.path.join(self.annotations + subdir_name + ".json"))['keypoints'].tolist())
+        self.keypoints = np.flip(np.array(pd.read_json(os.path.join(self.annotations + subdir_name + ".json"))['keypoints'].tolist()), 2).copy()
         self.transforms = transforms.Compose([transforms.ToTensor()])
 
     def __len__(self):

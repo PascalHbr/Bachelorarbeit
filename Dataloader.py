@@ -9,9 +9,9 @@ import numpy as np
 
 
 
-class ImageDataset(Dataset):
+class DeepFashionDataset(Dataset):
     def __init__(self, size, train=True):
-        super(ImageDataset, self).__init__()
+        super(DeepFashion, self).__init__()
         self.size = size
         self.train = train
         self.basepath = "/export/scratch/compvis/datasets/deepfashion_inshop/Img/img/"

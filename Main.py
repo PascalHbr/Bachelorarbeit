@@ -1,6 +1,6 @@
 import torch
-from Dataloader import ImageDataset, DataLoader, Human3MDataset
-from utils import save_model, load_model, load_deep_fashion_dataset, make_visualization, keypoint_metric
+from Dataloader import DeepFashionDataset, DataLoader, Human3MDataset
+from utils import save_model, load_model, make_visualization, keypoint_metric
 from Model import Model
 from config import parse_args, write_hyperparameters
 from dotmap import DotMap
@@ -49,8 +49,8 @@ def main(arg):
         wandb.init(project='Disentanglement', config=arg, name=arg.name)
         wandb.watch(model, log='all')
         # Load Datasets and DataLoader
-        train_dataset = ImageDataset(size=arg.reconstr_dim, train=True)
-        test_dataset = ImageDataset(size=arg.reconstr_dim, train=False)
+        train_dataset = DeepFashionDataset(size=arg.reconstr_dim, train=True)
+        test_dataset = DeepFashionDataset(size=arg.reconstr_dim, train=False)
         # train_dataset = Human3MDataset(size=arg.reconstr_dim, train=True)
         # test_dataset = Human3MDataset(size=arg.reconstr_dim, train=False)
         train_loader = DataLoader(train_dataset, batch_size=bn, shuffle=True, num_workers=4)
@@ -118,7 +118,7 @@ def main(arg):
         # Load Model and Dataset
         model = Model(arg).to(device)
         model = load_model(model, model_save_dir, device)
-        test_dataset = ImageDataset(size=arg.reconstr_dim, train=False)
+        test_dataset = DeepFashionDataset(size=arg.reconstr_dim, train=False)
         # test_dataset = Human3MDataset(size=arg.reconstr_dim, train=False)
         test_loader = DataLoader(test_dataset, shuffle=True, batch_size=bn, num_workers=4)
         model.mode = 'predict'

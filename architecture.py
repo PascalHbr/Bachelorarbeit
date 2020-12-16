@@ -1,34 +1,11 @@
 import torch
 import torch.nn as nn
-
+from transformer import ViT
 
 def softmax(logit_map):
     bn, kn, h, w = logit_map.shape
     map_norm = nn.Softmax(dim=2)(logit_map.reshape(bn, kn, -1)).reshape(bn, kn, h, w)
     return map_norm
-
-
-class LayerNorm(nn.Module):
-    def __init__(self, num_features, eps=1e-5, affine=True):
-        super(LayerNorm, self).__init__()
-        self.num_features = num_features
-        self.affine = affine
-        self.eps = eps
-
-        if self.affine:
-            self.gamma = nn.Parameter(torch.Tensor(num_features).uniform_())
-            self.beta = nn.Parameter(torch.zeros(num_features))
-
-    def forward(self, x):
-        shape = [-1] + [1] * (x.dim() - 1)
-        mean = x.view(x.size(0), -1).mean(1).view(*shape)
-        std = x.view(x.size(0), -1).std(1).view(*shape)
-
-        y = (x - mean) / (std + self.eps)
-        if self.affine:
-            shape = [1, -1] + [1] * (x.dim() - 2)
-            y = self.gamma.view(*shape) * y + self.beta.view(*shape)
-        return y
 
 
 class Conv(nn.Module):
@@ -119,8 +96,20 @@ class E(nn.Module):
         self.dropout = nn.Dropout(p_dropout)
         self.reconstr_dim = reconstr_dim
         self.hg = Hourglass(depth, residual_dim)  # depth 4 has bottleneck of 4x4
+        self.VT = ViT(
+            image_size=64,
+            patch_size=8,
+            dim=256,
+            depth=6,
+            heads=8,
+            mlp_dim=256,
+            dropout=0.1,
+            emb_dropout=0.1,
+            nk=n_feature
+        )
         self.out = Conv(residual_dim, residual_dim, kernel_size=1, stride=1, bn=True, relu=True)
         self.feature = Conv(residual_dim, n_feature, kernel_size=1, stride=1, bn=False, relu=False)
+        self.feature_transformer = Conv(n_feature, n_feature, kernel_size=1, stride=1, bn=False, relu=False)
         # Preprocessing
         if self.sigma:
             if self.reconstr_dim == 128:
@@ -135,23 +124,19 @@ class E(nn.Module):
                                                       Residual(128, residual_dim)
                                                       )
             self.map_transform = Conv(n_feature, residual_dim, 1, 1, bn=False, relu=False)  # channels for addition must be increased
-        if not self.sigma:
-            self.preprocess_alpha = Conv(2 * residual_dim, residual_dim, 1, 1, bn=True, relu=True)  # for stack
 
     def forward(self, x):
         if self.sigma:
             x = self.preprocess_sigma(x)
-        # else:
-        #     x = self.preprocess_alpha(x) # Try concatenation instead of sum
-        out = self.hg(x)
-        out = self.dropout(out)
-        out = self.out(out)
+        # out = self.hg(x)
+        # out = self.dropout(out)
+        # out = self.out(out)
+        out = self.VT(x)
         # Get Normalized Feature Maps for E_sigma
-        feature_map = self.feature(out)
+        feature_map = self.feature_transformer(out)
         if self.sigma:
             map_normalized = softmax(feature_map)
             map_transformed = self.map_transform(map_normalized)
-            # stack = torch.cat((map_transformed, x), dim=1) # Try concatenation instead of sum
             stack = map_transformed + x
             return feature_map, map_normalized, stack
         else:

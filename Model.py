@@ -85,3 +85,4 @@ class Model(nn.Module):
 
         elif self.mode == 'train':
             return image_rec, reconstruct_same_id, total_loss, rec_loss, transform_loss, precision_loss, mu, L_inv, mu_original
+

@@ -5,7 +5,15 @@ from matplotlib import colors
 from matplotlib.backends.backend_pdf import PdfPages
 from architecture import softmax
 from ops import get_heat_map, get_mu_and_prec
+
+import os
+from glob import glob
 import cv2
+from natsort import natsorted
+
+
+def count_parameters(model):
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 
 def save_model(model, model_save_dir):
@@ -18,7 +26,7 @@ def load_model(model, model_save_dir, device):
 
 
 def make_visualization(original, original_part_maps, labels, reconstruction, shape_transform, app_transform, fmap_shape,
-                       fmap_app, L_inv_scale, directory, epoch, device, index=0, show_labels=True):
+                       fmap_app, L_inv_scale, directory, epoch, device, index=0, show_labels=False):
 
     # Color List for Parts
     color_list = ['black', 'gray', 'brown', 'chocolate', 'orange', 'gold', 'olive', 'lawngreen', 'aquamarine',
@@ -166,4 +174,12 @@ def keypoint_metric(prediction, ground_truth, image_size=256):
 
 
 if __name__ == '__main__':
-    pass
+    basepath = "/export/scratch/compvis/datasets/human3M_lorenz19"
+    subdir_name = "test"
+    datafiles = natsorted(glob(os.path.join(basepath, subdir_name, "*", "*", "*.jpg")))
+    for i in range(50, 60):
+        image = cv2.imread(datafiles[i])
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        print (datafiles[i])
+        plt.imshow(image)
+        plt.show()

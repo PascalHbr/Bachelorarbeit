@@ -42,9 +42,9 @@ class DeepFashionDataset(Dataset):
         return image, keypoint
 
 
-class Human3MDataset(Dataset):
+class Human36MDataset(Dataset):
     def __init__(self, size, train=True):
-        super(Human3MDataset, self).__init__()
+        super(Human36MDataset, self).__init__()
         self.size = size
         self.train = train
         self.basepath = "/export/scratch/compvis/datasets/human3M_lorenz19"
@@ -66,3 +66,10 @@ class Human3MDataset(Dataset):
         image = self.transforms(image)
 
         return image, image
+
+
+__datasets__ = {'deepfashion': DeepFashionDataset,
+                'human36m': Human36MDataset}
+
+def get_dataset(dataset_name):
+    return __datasets__[dataset_name]

@@ -35,7 +35,7 @@ class Model(nn.Module):
         self.augm_scal = arg.augm_scal
         self.fold_with_shape = arg.fold_with_shape
         #self.E_sigma = E(self.depth_s, self.n_parts, self.residual_dim, self.p_dropout, sigma=True)
-        self.E_sigma = E_transformer(self.depth_s, self.n_parts, self.residual_dim, self.p_dropout, sigma=True)
+        self.E_sigma = E(self.depth_s, self.n_parts, self.residual_dim, self.p_dropout, sigma=True)
         self.E_alpha = E(self.depth_a, self.n_features, self.residual_dim, self.p_dropout, sigma=False)
         self.decoder = Decoder(self.n_parts, self.n_features, self.reconstr_dim)
 

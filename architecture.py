@@ -112,10 +112,14 @@ class E(nn.Module):
                                                       Residual(128, residual_dim)
                                                       )
             self.map_transform = Conv(n_feature, residual_dim, 1, 1, bn=False, relu=False)  # channels for addition must be increased
+        if not self.sigma:
+            self.preprocess_alpha = Conv(2 * residual_dim, residual_dim, 1, 1, bn=True, relu=True)  # for stack
 
     def forward(self, x):
         if self.sigma:
             x = self.preprocess_sigma(x)
+        # else:
+        #     x = self.preprocess_alpha(x) # Try concatenation instead of sum
         out = self.hg(x)
         out = self.dropout(out)
         out = self.out(out)
@@ -124,6 +128,7 @@ class E(nn.Module):
         if self.sigma:
             map_normalized = softmax(feature_map)
             map_transformed = self.map_transform(map_normalized)
+            # stack = torch.cat((map_transformed, x), dim=1) # Try concatenation instead of sum
             stack = map_transformed + x
             return feature_map, map_normalized, stack
         else:
@@ -167,6 +172,7 @@ class E_transformer(nn.Module):
                                                       Residual(128, residual_dim)
                                                       )
             self.map_transform = Conv(n_feature, residual_dim, 1, 1, bn=False, relu=False)  # channels for addition must be increased
+
 
     def forward(self, x):
         if self.sigma:

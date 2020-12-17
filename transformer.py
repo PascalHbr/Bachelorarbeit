@@ -61,7 +61,7 @@ class Attention(nn.Module):
             dots.masked_fill_(~mask, mask_value)
             del mask
 
-        attn = dots.softmax(dim=-1)
+        attn = rearrange(dots, 'b h i j -> b h (i j)').softmax(dim=-1).view_as(dots)
 
         out = torch.einsum('bhij,bhjd->bhid', attn, v)
         out = rearrange(out, 'b h n d -> b n (h d)')
@@ -75,7 +75,7 @@ class Transformer(nn.Module):
         self.layers = nn.ModuleList([])
         for _ in range(depth):
             self.layers.append(nn.ModuleList([
-                Residual(PreNorm(dim, SelfAttention(dim, heads = heads, dropout = dropout))),
+                Residual(PreNorm(dim, Attention(dim, heads = heads, dropout = dropout))),
                 Residual(PreNorm(dim, FeedForward(dim, mlp_dim, dropout = dropout)))
             ]))
     def forward(self, x, mask = None):

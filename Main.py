@@ -45,7 +45,7 @@ def main(arg):
 
         # Define Model & Optimizer
         model = Model(arg).to(device)
-        print(count_parameters(model))
+        print(f'Number of Parameters: {count_parameters(model)}')
         if load_from_ckpt:
             model = load_model(model, model_save_dir, device).to(device)
         optimizer = torch.optim.Adam(model.parameters(), lr=lr)

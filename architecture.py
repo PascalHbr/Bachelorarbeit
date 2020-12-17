@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from transformer import ViT
+from transformer import ViT, ViT2
 
 def softmax(logit_map):
     bn, kn, h, w = logit_map.shape
@@ -96,20 +96,8 @@ class E(nn.Module):
         self.dropout = nn.Dropout(p_dropout)
         self.reconstr_dim = reconstr_dim
         self.hg = Hourglass(depth, residual_dim)  # depth 4 has bottleneck of 4x4
-        self.VT = ViT(
-            image_size=64,
-            patch_size=8,
-            dim=256,
-            depth=6,
-            heads=8,
-            mlp_dim=256,
-            dropout=0.1,
-            emb_dropout=0.1,
-            nk=n_feature
-        )
         self.out = Conv(residual_dim, residual_dim, kernel_size=1, stride=1, bn=True, relu=True)
         self.feature = Conv(residual_dim, n_feature, kernel_size=1, stride=1, bn=False, relu=False)
-        self.feature_transformer = Conv(n_feature, n_feature, kernel_size=1, stride=1, bn=False, relu=False)
         # Preprocessing
         if self.sigma:
             if self.reconstr_dim == 128:
@@ -128,16 +116,68 @@ class E(nn.Module):
     def forward(self, x):
         if self.sigma:
             x = self.preprocess_sigma(x)
-        # out = self.hg(x)
-        # out = self.dropout(out)
-        # out = self.out(out)
-        out = self.VT(x)
+        out = self.hg(x)
+        out = self.dropout(out)
+        out = self.out(out)
         # Get Normalized Feature Maps for E_sigma
-        feature_map = self.feature_transformer(out)
+        feature_map = self.feature(out)
         if self.sigma:
             map_normalized = softmax(feature_map)
             map_transformed = self.map_transform(map_normalized)
             stack = map_transformed + x
+            return feature_map, map_normalized, stack
+        else:
+            return feature_map
+
+
+class E_transformer(nn.Module):
+    def __init__(self, depth, n_feature, residual_dim, p_dropout, sigma=True, reconstr_dim=256):
+        super(E_transformer, self).__init__()
+        self.sigma = sigma
+        self.n_feature = n_feature
+        self.dropout = nn.Dropout(p_dropout)
+        self.reconstr_dim = reconstr_dim
+        self.hg = Hourglass(depth, residual_dim)  # depth 4 has bottleneck of 4x4
+        self.VT = ViT(
+            image_size=256,
+            patch_size=32,
+            dim=1024,
+            depth=16,
+            heads=8,
+            mlp_dim=128,
+            dropout=0.1,
+            emb_dropout=0.1,
+            nk=n_feature,
+            sigma=self.sigma
+        )
+
+        self.out = Conv(residual_dim, residual_dim, kernel_size=1, stride=1, bn=True, relu=True)
+        self.feature = Conv(n_feature, n_feature, kernel_size=1, stride=1, bn=False, relu=False)
+        # Preprocessing
+        if self.sigma:
+            if self.reconstr_dim == 128:
+                self.preprocess_sigma = nn.Sequential(Conv(3, 64, kernel_size=6, stride=2, bn=True, relu=True),
+                                                      Residual(64, residual_dim)
+                                                      )
+            elif self.reconstr_dim == 256:
+                self.preprocess_sigma = nn.Sequential(Conv(3, 64, kernel_size=6, stride=2, bn=True, relu=True),
+                                                      Residual(64, 128),
+                                                      nn.MaxPool2d(2, 2),
+                                                      Residual(128, 128),
+                                                      Residual(128, residual_dim)
+                                                      )
+            self.map_transform = Conv(n_feature, residual_dim, 1, 1, bn=False, relu=False)  # channels for addition must be increased
+
+    def forward(self, x):
+        if self.sigma:
+            x_stack = self.preprocess_sigma(x)
+        out = self.VT(x)
+        # Get Normalized Feature Maps for E_sigma
+        feature_map = self.feature(out)
+        if self.sigma:
+            map_normalized = softmax(feature_map)
+            map_transformed = self.map_transform(map_normalized)
+            stack = map_transformed + x_stack
             return feature_map, map_normalized, stack
         else:
             return feature_map

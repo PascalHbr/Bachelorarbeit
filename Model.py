@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from opt_einsum import contract
-from architecture import E, Decoder
+from architecture import E, Decoder, E_transformer
 from ops import prepare_pairs, AbsDetJacobian, feat_mu_to_enc, get_local_part_appearances, get_mu_and_prec, loss_fn
 from transformations import tps_parameters, make_input_tps_param, ThinPlateSpline
 
@@ -34,7 +34,8 @@ class Model(nn.Module):
         self.scal_var = arg.scal_var
         self.augm_scal = arg.augm_scal
         self.fold_with_shape = arg.fold_with_shape
-        self.E_sigma = E(self.depth_s, self.n_parts, self.residual_dim, self.p_dropout, sigma=True)
+        #self.E_sigma = E(self.depth_s, self.n_parts, self.residual_dim, self.p_dropout, sigma=True)
+        self.E_sigma = E_transformer(self.depth_s, self.n_parts, self.residual_dim, self.p_dropout, sigma=True)
         self.E_alpha = E(self.depth_a, self.n_features, self.residual_dim, self.p_dropout, sigma=False)
         self.decoder = Decoder(self.n_parts, self.n_features, self.reconstr_dim)
 

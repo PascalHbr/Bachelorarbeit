@@ -1,6 +1,10 @@
 import torch
 import torch.nn as nn
-from transformer import ViT, ViT2
+from transformer import ViT
+from gsa_pytorch import GSA
+from LambdaNetworks import LambdaBottleneck
+import torch.nn.functional as F
+
 
 def softmax(logit_map):
     bn, kn, h, w = logit_map.shape
@@ -96,8 +100,8 @@ class E(nn.Module):
         self.dropout = nn.Dropout(p_dropout)
         self.reconstr_dim = reconstr_dim
         self.hg = Hourglass(depth, residual_dim)  # depth 4 has bottleneck of 4x4
-        self.out = Conv(residual_dim, residual_dim, kernel_size=1, stride=1, bn=True, relu=True)
-        self.feature = Conv(residual_dim, n_feature, kernel_size=1, stride=1, bn=False, relu=False)
+        self.out = Conv(residual_dim, residual_dim, kernel_size=3, stride=1, bn=True, relu=True)
+        self.feature = Conv(residual_dim, n_feature, kernel_size=3, stride=1, bn=False, relu=False)
         # Preprocessing
         if self.sigma:
             if self.reconstr_dim == 128:
@@ -111,15 +115,11 @@ class E(nn.Module):
                                                       Residual(128, 128),
                                                       Residual(128, residual_dim)
                                                       )
-            self.map_transform = Conv(n_feature, residual_dim, 1, 1, bn=False, relu=False)  # channels for addition must be increased
-        if not self.sigma:
-            self.preprocess_alpha = Conv(2 * residual_dim, residual_dim, 1, 1, bn=True, relu=True)  # for stack
+            self.map_transform = Conv(n_feature, residual_dim, 3, 1, bn=True, relu=True)  # channels for addition must be increased
 
     def forward(self, x):
         if self.sigma:
             x = self.preprocess_sigma(x)
-        # else:
-        #     x = self.preprocess_alpha(x) # Try concatenation instead of sum
         out = self.hg(x)
         out = self.dropout(out)
         out = self.out(out)
@@ -128,7 +128,6 @@ class E(nn.Module):
         if self.sigma:
             map_normalized = softmax(feature_map)
             map_transformed = self.map_transform(map_normalized)
-            # stack = torch.cat((map_transformed, x), dim=1) # Try concatenation instead of sum
             stack = map_transformed + x
             return feature_map, map_normalized, stack
         else:
@@ -136,57 +135,68 @@ class E(nn.Module):
 
 
 class E_transformer(nn.Module):
-    def __init__(self, depth, n_feature, residual_dim, p_dropout, sigma=True, reconstr_dim=256):
+    def __init__(self, arg):
         super(E_transformer, self).__init__()
-        self.sigma = sigma
-        self.n_feature = n_feature
-        self.dropout = nn.Dropout(p_dropout)
-        self.reconstr_dim = reconstr_dim
-        self.hg = Hourglass(depth, residual_dim)  # depth 4 has bottleneck of 4x4
-        self.VT = ViT(
-            image_size=256,
-            patch_size=32,
-            dim=1024,
-            depth=16,
-            heads=8,
-            mlp_dim=128,
-            dropout=0.1,
-            emb_dropout=0.1,
-            nk=n_feature,
-            sigma=self.sigma
-        )
+        self.n_parts = arg.n_parts
+        self.residual_dim = arg.residual_dim
+        self.reconstr_dim = arg.reconstr_dim
+        self.dropout = nn.Dropout(arg.p_dropout)
+        # self.VT = ViT(
+        #     image_size=arg.reconstr_dim,
+        #     patch_size=arg.t_patch_size,
+        #     dim=arg.t_dim,
+        #     depth=arg.t_depth,
+        #     heads=arg.t_heads,
+        #     mlp_dim=arg.t_mlp_dim,
+        #     dropout=0.1,
+        #     emb_dropout=0.1,
+        #     nk=arg.n_parts,
+        #     n_token=arg.t_n_token,
+        #     use_first=arg.t_use_first
+        # )
+        # self.relu = nn.LeakyReLU()
+        # self.GSA1 = GSA(
+        #                 dim=arg.gsa_dim,
+        #                 dim_out=arg.gsa_dim_out,
+        #                 dim_key=arg.gsa_dim_key,
+        #                 heads=arg.gsa_heads,
+        #                 rel_pos_length=arg.gsa_length  # in paper, set to max(height, width)
+        #                 )
+        # self.norm1 = nn.InstanceNorm2d(arg.dim_out)
+        self.bottleneck = LambdaBottleneck(256, 256)
+        self.out = Conv(1024, arg.gsa_dim_out, kernel_size=1, stride=1, bn=True, relu=True)
+        self.feature = Conv(arg.gsa_dim_out, self.n_parts, kernel_size=1, stride=1, bn=False, relu=False)
 
-        self.out = Conv(residual_dim, residual_dim, kernel_size=1, stride=1, bn=True, relu=True)
-        self.feature = Conv(n_feature, n_feature, kernel_size=1, stride=1, bn=False, relu=False)
         # Preprocessing
-        if self.sigma:
-            if self.reconstr_dim == 128:
-                self.preprocess_sigma = nn.Sequential(Conv(3, 64, kernel_size=6, stride=2, bn=True, relu=True),
-                                                      Residual(64, residual_dim)
-                                                      )
-            elif self.reconstr_dim == 256:
-                self.preprocess_sigma = nn.Sequential(Conv(3, 64, kernel_size=6, stride=2, bn=True, relu=True),
-                                                      Residual(64, 128),
-                                                      nn.MaxPool2d(2, 2),
-                                                      Residual(128, 128),
-                                                      Residual(128, residual_dim)
-                                                      )
-            self.map_transform = Conv(n_feature, residual_dim, 1, 1, bn=False, relu=False)  # channels for addition must be increased
+        if self.reconstr_dim == 128:
+            self.preprocess_sigma = nn.Sequential(Conv(3, 64, kernel_size=6, stride=2, bn=True, relu=True),
+                                                  Residual(64, self.residual_dim)
+                                                  )
+        elif self.reconstr_dim == 256:
+            self.preprocess_sigma = nn.Sequential(Conv(3, 64, kernel_size=6, stride=2, bn=True, relu=True),
+                                                  Residual(64, 128),
+                                                  nn.MaxPool2d(2, 2),
+                                                  Residual(128, 128),
+                                                  Residual(128, self.residual_dim)
+                                                  )
+
+        self.map_transform = Conv(self.n_parts, arg.residual_dim, 1, 1, bn=False, relu=False)  # channels for addition must be increased
 
 
     def forward(self, x):
-        if self.sigma:
-            x_stack = self.preprocess_sigma(x)
-        out = self.VT(x)
+        x = self.preprocess_sigma(x)
+        # out = self.relu(self.norm1(self.GSA1(x)))
+        out = self.bottleneck(x)
+        out = self.dropout(out)
+        out = self.out(out)
+
         # Get Normalized Feature Maps for E_sigma
         feature_map = self.feature(out)
-        if self.sigma:
-            map_normalized = softmax(feature_map)
-            map_transformed = self.map_transform(map_normalized)
-            stack = map_transformed + x_stack
-            return feature_map, map_normalized, stack
-        else:
-            return feature_map
+        map_normalized = softmax(feature_map)
+        map_transformed = self.map_transform(map_normalized)
+        stack = map_transformed + x
+        return feature_map, map_normalized, stack
+
 
 
 class Nccuc(nn.Module):

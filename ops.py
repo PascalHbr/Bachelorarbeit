@@ -322,7 +322,7 @@ def fold_img_with_L_inv(img, mu, L_inv, scale, threshold, device, normalize=True
 
 
 def loss_fn(bn, mu, L_inv, mu_t, stddev_t, reconstruct_same_id, image_rec, fold_with_shape, l_2_scal, l_2_threshold,
-            L_mu, L_cov, device):
+            L_mu, L_cov, L_rec, device):
 
     # Equiv Loss
     mu_t_1, mu_t_2 = mu_t[:bn], mu_t[bn:]
@@ -341,9 +341,9 @@ def loss_fn(bn, mu, L_inv, mu_t, stddev_t, reconstruct_same_id, image_rec, fold_
         fold_img_squared = fold_img_with_L_inv(distance_metric, mu.detach(), L_inv.detach(),
                                                l_2_scal, l_2_threshold, device)
     else:
-        fold_img_squared, heat_mask_l2 = fold_img_with_mu(distance_metric, mu, l_2_scal, l_2_threshold, device)
+        fold_img_squared, heat_mask_l2 = fold_img_with_mu(distance_metric, mu.detach(), l_2_scal, l_2_threshold, device)
 
     rec_loss = torch.mean(torch.sum(fold_img_squared, dim=[2, 3]))
 
-    total_loss = rec_loss + L_mu * transform_loss + L_cov * precision_loss
+    total_loss = L_rec * rec_loss + L_mu * transform_loss + L_cov * precision_loss
     return total_loss, rec_loss, transform_loss, precision_loss

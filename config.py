@@ -4,15 +4,12 @@ import argparse
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--name', default="trial1", type=str, help="name of the experiment", required=True)
-    parser.add_argument('--gpu', default=None, required=True)
+    parser.add_argument('--gpu', type=int, default=None, required=True)
     parser.add_argument('--dataset', default='deepfashion', help="name of the dataset")
 
     # run setting
     parser.add_argument('--mode', default='train', choices=['train', 'predict'])
     parser.add_argument('--load_from_ckpt', default=False, type=bool)
-
-    # dataset folder
-    # parser.add_argument('--dataset', choices=dataset_map_train.keys(), required=True)
 
     # options
     parser.add_argument('--covariance', default=True, type=bool)
@@ -34,6 +31,7 @@ def parse_args():
     parser.add_argument('--weight_decay', default=1e-4, type=float, help="weight_decay")
     parser.add_argument('--L_mu', default=5., type=float, help="")
     parser.add_argument('--L_cov', default=0.1, type=float, help="")
+    parser.add_argument('--L_rec', default=1.0, type=float, help="")
 
     # tps parameters
     parser.add_argument('--fold_with_shape', default=True, type=bool, help="fold with shape or with mu")
@@ -52,8 +50,24 @@ def parse_args():
     parser.add_argument('--brightness', default=0.3, type=float, help="brightness variation")
     parser.add_argument('--saturation', default=0.1, type=float, help="saturation variation")
     parser.add_argument('--hue', default=0.3, type=float,  help="hue variation")
-    parser.add_argument('--p_flip', default=0., type=float, help="flip probability")
     parser.add_argument('--static', default=True)
+
+    # transformer parameters
+    parser.add_argument('--t_patch_size', default=16, type=int, help="size of image patches")
+    parser.add_argument('--t_dim', default=256, type=int, help="dimension of patch embedding")
+    parser.add_argument('--t_depth', default=8, type=int, help="number of transformer blocks")
+    parser.add_argument('--t_heads', default=8, type=int, help="number of attention heads")
+    parser.add_argument('--t_mlp_dim', default=256, type=int, help="dimension of the mlp layer")
+    parser.add_argument('--t_n_token', default=1, type=int, help="number of cls tokens")
+    parser.add_argument('--t_use_first', default=False, help="bool if using cls tokens or not")
+
+    # GSA parameters
+    parser.add_argument('--gsa_dim', default=256, type=int, help="")
+    parser.add_argument('--gsa_dim_out', default=256, type=int, help="")
+    parser.add_argument('--gsa_dim_key', default=32, type=int, help="")
+    parser.add_argument('--gsa_heads', default=8, type=int, help="")
+    parser.add_argument('--gsa_length', default=256, type=int, help="")
+
     arg = parser.parse_args()
     return arg
 

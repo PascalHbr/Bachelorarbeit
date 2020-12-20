@@ -1,4 +1,5 @@
 import torch
+import torch.nn as nn
 from Dataloader import DataLoader, get_dataset
 from utils import save_model, load_model, make_visualization, keypoint_metric
 from Model import Model
@@ -44,7 +45,8 @@ def main(arg):
         write_hyperparameters(arg.toDict(), model_save_dir)
 
         # Define Model & Optimizer
-        model = Model(arg).to(device)
+        model = nn.DataParallel(Model(arg), device_ids=[8, 9])
+        # model = Model(arg).to(device)
         print(f'Number of Parameters: {count_parameters(model)}')
         if load_from_ckpt:
             model = load_model(model, model_save_dir, device).to(device)
@@ -119,10 +121,10 @@ def main(arg):
             os.makedirs(prediction_save_dir)
 
         # Load Model and Dataset
-        model = Model(arg).to(device)
+        model = nn.DataParallel(Model(arg), device_ids=arg.gpu)
         model = load_model(model, model_save_dir, device)
         test_dataset = dataset(size=arg.reconstr_dim, train=False)
-        test_loader = DataLoader(test_dataset, shuffle=True, batch_size=bn, num_workers=4)
+        test_loader = DataLoader(test_dataset, batch_size=bn, num_workers=4)
         model.mode = 'predict'
         model.eval()
 

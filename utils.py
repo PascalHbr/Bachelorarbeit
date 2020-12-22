@@ -126,7 +126,13 @@ def make_visualization(original, original_part_maps, labels, reconstruction, sha
         pdf.savefig(fig_shape)
         pdf.savefig(fig_app)
 
+        fig_head.canvas.draw()
+        w, h = fig_head.canvas.get_width_height()
+        img = np.fromstring(fig_head.canvas.tostring_rgb(), dtype=np.uint8, sep='').reshape((w, h, 3))
+
         plt.close('all')
+
+    return img
 
 
 def visualize_keypoints(img, fmap, labels, L_inv_scale, device, show_labels):
@@ -158,17 +164,34 @@ def visualize_keypoints(img, fmap, labels, L_inv_scale, device, show_labels):
 
 def keypoint_metric(prediction, ground_truth, image_size=256):
     bn, nk, _ = prediction.shape
-    prediction = ((prediction + 1.) / 2. * image_size).float().cpu()
-    ground_truth = ground_truth[:, 0].float().cpu()
+    preds = ((prediction + 1.) / 2. * image_size).float().detach().cpu()
+    gt = ground_truth[:, 0].float().detach().cpu()
+    first_indices = torch.arange(bn)[:, None]
+
+    # sort by y index
+    indices_gt = gt[:, :, 0].sort()[1]
+    gt_sorted = gt[first_indices, indices_gt]
+
+    indices_preds = preds[:, :, 0].sort()[1]
+    preds_sorted = preds[first_indices, indices_preds]
+
     distances = torch.zeros(1)
-    for i in range(nk):
-        best_distance = 1e7
-        for j in range(nk):
-            distance = torch.mean(torch.cdist(prediction[:, j], ground_truth[:, i], p=2.0))
-            if distance < best_distance:
-                best_distance = distance
-        distances += best_distance
-    distance_norm = distances / (nk * image_size)
+    for b in range(bn):
+        preds_bn = preds_sorted[b]
+        gt_bn = gt_sorted[b]
+        for k in range(nk):
+            best_distance = 1e7
+            best_index = 1e7
+            for i in range(len(preds_bn)):
+                distance = torch.mean(torch.cdist(preds_bn[i].unsqueeze(0), gt_bn[k].unsqueeze(0), p=2.0))
+                if distance < best_distance:
+                    best_distance = distance
+                    best_index = i
+            if len(preds_bn) > 1:
+                preds_bn = torch.cat([preds_bn[:best_index], preds_bn[best_index + 1:]])
+            distances += best_distance
+
+    distance_norm = distances / (bn * nk * image_size)
 
     return distance_norm
 

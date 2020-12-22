@@ -25,8 +25,11 @@ class Model(nn.Module):
         self.L_mu = arg.L_mu
         self.L_cov = arg.L_cov
         self.L_rec = arg.L_rec
+        self.L_sep = arg.L_sep
+        self.sig_sep = arg.sig_sep
         self.l_2_scal = arg.l_2_scal
         self.l_2_threshold = arg.l_2_threshold
+        self.map_threshold = arg.map_threshold
         self.tps_scal = arg.tps_scal
         self.scal = arg.scal
         self.L_inv_scal = arg.L_inv_scal
@@ -39,6 +42,7 @@ class Model(nn.Module):
         # self.E_sigma = E_transformer(self.arg)
         self.E_alpha = E(self.depth_a, self.n_features, self.residual_dim, self.p_dropout, sigma=False)
         self.decoder = Decoder(self.n_parts, self.n_features, self.reconstr_dim)
+
 
     def forward(self, x):
         batch_size = x.shape[0]
@@ -75,7 +79,8 @@ class Model(nn.Module):
         total_loss, rec_loss, transform_loss, precision_loss = loss_fn(batch_size, mu, L_inv, mu_t, stddev_t,
                                                                        reconstruct_same_id, image_rec, self.fold_with_shape,
                                                                        self.l_2_scal, self.l_2_threshold, self.L_mu, self.L_cov,
-                                                                       self.L_rec, self.device)
+                                                                       self.L_rec, self.L_sep, self.sig_sep,
+                                                                       self.device)
 
         # norms
         original_part_maps_raw, original_part_maps_norm, original_sum_part_maps = self.E_sigma(x)

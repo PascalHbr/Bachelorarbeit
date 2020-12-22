@@ -115,7 +115,7 @@ class E(nn.Module):
                                                       Residual(128, 128),
                                                       Residual(128, residual_dim)
                                                       )
-            self.map_transform = Conv(n_feature, residual_dim, 3, 1, bn=True, relu=True)  # channels for addition must be increased
+            self.map_transform = Conv(n_feature, residual_dim, 3, 1, bn=False, relu=False)  # channels for addition must be increased
 
     def forward(self, x):
         if self.sigma:
@@ -154,18 +154,17 @@ class E_transformer(nn.Module):
         #     n_token=arg.t_n_token,
         #     use_first=arg.t_use_first
         # )
-        # self.relu = nn.LeakyReLU()
-        # self.GSA1 = GSA(
-        #                 dim=arg.gsa_dim,
-        #                 dim_out=arg.gsa_dim_out,
-        #                 dim_key=arg.gsa_dim_key,
-        #                 heads=arg.gsa_heads,
-        #                 rel_pos_length=arg.gsa_length  # in paper, set to max(height, width)
-        #                 )
-        # self.norm1 = nn.InstanceNorm2d(arg.dim_out)
-        self.bottleneck = LambdaBottleneck(256, 256)
-        self.out = Conv(1024, arg.gsa_dim_out, kernel_size=1, stride=1, bn=True, relu=True)
-        self.feature = Conv(arg.gsa_dim_out, self.n_parts, kernel_size=1, stride=1, bn=False, relu=False)
+        self.relu = nn.LeakyReLU()
+        self.GSA1 = GSA(
+                        dim=arg.gsa_dim,
+                        dim_out=arg.gsa_dim_out,
+                        dim_key=arg.gsa_dim_key,
+                        heads=arg.gsa_heads,
+                        rel_pos_length=arg.gsa_length  # in paper, set to max(height, width)
+                        )
+        self.norm1 = nn.InstanceNorm2d(arg.dim_out)
+        self.out = Conv(arg.gsa_dim_out, arg.gsa_dim_out, kernel_size=3, stride=1, bn=True, relu=True)
+        self.feature = Conv(arg.gsa_dim_out, self.n_parts, kernel_size=3, stride=1, bn=False, relu=False)
 
         # Preprocessing
         if self.reconstr_dim == 128:
@@ -180,13 +179,12 @@ class E_transformer(nn.Module):
                                                   Residual(128, self.residual_dim)
                                                   )
 
-        self.map_transform = Conv(self.n_parts, arg.residual_dim, 1, 1, bn=False, relu=False)  # channels for addition must be increased
+        self.map_transform = Conv(self.n_parts, arg.residual_dim, 3, 1, bn=True, relu=True)  # channels for addition must be increased
 
 
     def forward(self, x):
         x = self.preprocess_sigma(x)
-        # out = self.relu(self.norm1(self.GSA1(x)))
-        out = self.bottleneck(x)
+        out = self.relu(self.norm1(self.GSA1(x)))
         out = self.dropout(out)
         out = self.out(out)
 

@@ -1,5 +1,4 @@
 import torch
-import torch.nn as nn
 from Dataloader import DataLoader, get_dataset
 from utils import save_model, load_model, make_visualization, keypoint_metric
 from Model import Model
@@ -45,8 +44,7 @@ def main(arg):
         write_hyperparameters(arg.toDict(), model_save_dir)
 
         # Define Model & Optimizer
-        model = nn.DataParallel(Model(arg), device_ids=[8, 9])
-        # model = Model(arg).to(device)
+        model = Model(arg).to(device)
         print(f'Number of Parameters: {count_parameters(model)}')
         if load_from_ckpt:
             model = load_model(model, model_save_dir, device).to(device)
@@ -78,26 +76,31 @@ def main(arg):
                     # Zero out gradients
                     optimizer.zero_grad()
                     loss.backward()
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), arg.clip)
                     optimizer.step()
                     # Track Loss
                     wandb.log({"Training Loss": loss})
-                    # wandb.log({"Training Rec Loss": rec_loss})
-                    # wandb.log({"Training Transform Loss": transform_loss})
-                    # wandb.log({"Training Precision Loss": precision_loss})
                     # Track Metric
                     score = keypoint_metric(mu_original, keypoints)
                     wandb.log({"Metric Train": score})
 
                 # Evaluate on Test Set
                 model.eval()
+                val_score = torch.zeros(1)
+                val_loss = torch.zeros(1)
                 for step, (original, keypoints) in enumerate(test_loader):
                     with torch.no_grad():
                         original, keypoints = original.to(device), keypoints.to(device)
                         image_rec, reconstruct_same_id, loss, rec_loss, transform_loss, precision_loss, mu, L_inv, mu_original = model(original)
                         # Track Loss and Metric
-                        wandb.log({"Evaluation Loss": loss})
                         score = keypoint_metric(mu_original, keypoints)
-                        wandb.log({"Metric Validation": score})
+                        val_score += score.cpu()
+                        val_loss += loss.cpu()
+
+                val_loss = val_loss / (step + 1)
+                val_score = val_score / (step + 1)
+                wandb.log({"Evaluation Loss": val_loss})
+                wandb.log({"Metric Validation": val_score})
 
                 # Track Progress & Visualization
                 for step, (original, keypoints) in enumerate(test_loader):
@@ -105,13 +108,17 @@ def main(arg):
                         model.mode = 'predict'
                         original, keypoints = original.to(device), keypoints.to(device)
                         original_part_maps, mu_original, image_rec, part_maps, part_maps, reconstruct_same_id = model(original)
-                        make_visualization(original, original_part_maps, keypoints, reconstruct_same_id, image_rec[:original.shape[0]],
+                        img = make_visualization(original, original_part_maps, keypoints, reconstruct_same_id, image_rec[:original.shape[0]],
                                            image_rec[original.shape[0]:], part_maps[original.shape[0]:], part_maps[:original.shape[0]],
                                            L_inv_scal, model_save_dir + '/summary/', epoch, device, show_labels=False)
+                        if epoch % 5 == 0:
+                            wandb.log({"Summary_" + str(epoch): [wandb.Image(img)]})
                         save_model(model, model_save_dir)
 
                         if step == 0:
                             break
+                # Decrements
+                # model.L_sep = arg.sig_decr * model.L_sep
 
     elif mode == 'predict':
         # Make Directory for Predictions
@@ -121,7 +128,7 @@ def main(arg):
             os.makedirs(prediction_save_dir)
 
         # Load Model and Dataset
-        model = nn.DataParallel(Model(arg), device_ids=arg.gpu)
+        model = Model(arg).to(device)
         model = load_model(model, model_save_dir, device)
         test_dataset = dataset(size=arg.reconstr_dim, train=False)
         test_loader = DataLoader(test_dataset, batch_size=bn, num_workers=4)
@@ -137,8 +144,7 @@ def main(arg):
                                    image_rec[original.shape[0]:], part_maps[original.shape[0]:], part_maps[:original.shape[0]],
                                    L_inv_scal, prediction_save_dir, 0, device, show_labels=True)
                 # Track Metric
-                # score = keypoint_metric(mu_original, keypoints)
-                # print(score)
+                score = keypoint_metric(mu_original, keypoints)
                 if step == 0:
                     break
 

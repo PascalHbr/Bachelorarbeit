@@ -27,7 +27,7 @@ def AbsDetJacobian(batch_meshgrid, device):
 
 def augm(t, arg, device):
     t = K.ColorJitter(arg.brightness, arg.contrast, arg.saturation, arg.hue)(t)
-    random_tensor = 1. - arg.p_flip + torch.rand(size=[1], dtype=t.dtype, device=device)
+    random_tensor = 1. + torch.rand(size=[1], dtype=t.dtype, device=device)
     binary_tensor = torch.floor(random_tensor)
     random_tensor, binary_tensor = random_tensor, binary_tensor
 
@@ -322,18 +322,30 @@ def fold_img_with_L_inv(img, mu, L_inv, scale, threshold, device, normalize=True
 
 
 def loss_fn(bn, mu, L_inv, mu_t, stddev_t, reconstruct_same_id, image_rec, fold_with_shape, l_2_scal, l_2_threshold,
-            L_mu, L_cov, L_rec, device):
+            L_mu, L_cov, L_rec, L_sep, sig_sep, device):
 
     # Equiv Loss
     mu_t_1, mu_t_2 = mu_t[:bn], mu_t[bn:]
+    bn, nk, _ = mu_t_1.shape
     stddev_t_1, stddev_t_2 = stddev_t[:bn], stddev_t[bn:]
     transform_loss = torch.mean((mu_t_1 - mu_t_2) ** 2)
 
+    eps = 1e-7
     precision_sq = (stddev_t_1 - stddev_t_2) ** 2
-
-    eps = 1e-6
     precision_loss = torch.mean(torch.sqrt(torch.sum(precision_sq, dim=[2, 3]) + eps))
 
+    # Separation Loss
+    distances = torch.zeros(bn, device=device)
+    for k in range(nk):
+        for k_ in range(nk):
+            if k == k_:
+                continue
+            distance = torch.exp(-torch.norm(mu_t_1[:, k] - mu_t_1[:, k_], dim=1) / (2 * sig_sep**2))
+            distances += distance
+
+    sep_loss = torch.mean(distances)
+
+    # Reconstruction Loss
     img_difference = reconstruct_same_id - image_rec
     distance_metric = torch.abs(img_difference)
 
@@ -345,5 +357,5 @@ def loss_fn(bn, mu, L_inv, mu_t, stddev_t, reconstruct_same_id, image_rec, fold_
 
     rec_loss = torch.mean(torch.sum(fold_img_squared, dim=[2, 3]))
 
-    total_loss = L_rec * rec_loss + L_mu * transform_loss + L_cov * precision_loss
+    total_loss = L_rec * rec_loss + L_mu * transform_loss + L_cov * precision_loss + L_sep * sep_loss
     return total_loss, rec_loss, transform_loss, precision_loss

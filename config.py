@@ -18,7 +18,7 @@ def parse_args():
 
     # modes
     parser.add_argument('--batch_size', default=8, type=int,  help="batchsize if not slim and 2 * batchsize if slim")
-    parser.add_argument('--n_parts', default=16, type=int, help="number of parts")
+    parser.add_argument('--n_parts', default=17, type=int, help="number of parts")
     parser.add_argument('--n_features', default=128, type=int,  help="neurons of feature map layer")
     parser.add_argument('--n_c', default=3, type=int)
     parser.add_argument('--residual_dim', default=256, type=int,  help="neurons in residual module of the hourglass")
@@ -27,11 +27,15 @@ def parse_args():
 
     # loss multiplication constants
     parser.add_argument('--lr',  default=1e-3, type=float, help="learning rate of network")
+    parser.add_argument('--clip', default=5., type=float, help="")
     parser.add_argument('--p_dropout', default=0.2, type=float, help="dropout rate")
     parser.add_argument('--weight_decay', default=1e-4, type=float, help="weight_decay")
     parser.add_argument('--L_mu', default=5., type=float, help="")
     parser.add_argument('--L_cov', default=0.1, type=float, help="")
     parser.add_argument('--L_rec', default=1.0, type=float, help="")
+    parser.add_argument('--L_sep', default=0.2, type=float, help="")
+    parser.add_argument('--sig_sep', default=0.05, type=float, help="")
+    parser.add_argument('--sig_decr', default=1., type=float, help="")
 
     # tps parameters
     parser.add_argument('--fold_with_shape', default=True, type=bool, help="fold with shape or with mu")
@@ -66,7 +70,7 @@ def parse_args():
     parser.add_argument('--gsa_dim_out', default=256, type=int, help="")
     parser.add_argument('--gsa_dim_key', default=32, type=int, help="")
     parser.add_argument('--gsa_heads', default=8, type=int, help="")
-    parser.add_argument('--gsa_length', default=256, type=int, help="")
+    parser.add_argument('--gsa_length', default=64, type=int, help="")
 
     arg = parser.parse_args()
     return arg

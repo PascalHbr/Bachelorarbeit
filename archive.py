@@ -845,3 +845,19 @@ class LayerNorm(nn.Module):
             shape = [1, -1] + [1] * (x.dim() - 2)
             y = self.gamma.view(*shape) * y + self.beta.view(*shape)
         return y
+
+def keypoint_metric(prediction, ground_truth, image_size=256):
+    bn, nk, _ = prediction.shape
+    prediction = ((prediction + 1.) / 2. * image_size).float().cpu()
+    ground_truth = ground_truth[:, 0].float().cpu()
+    distances = torch.zeros(1)
+    for i in range(nk):
+        best_distance = 1e7
+        for j in range(nk):
+            distance = torch.mean(torch.cdist(prediction[:, j], ground_truth[:, i], p=2.0))
+            if distance < best_distance:
+                best_distance = distance
+        distances += best_distance
+    distance_norm = distances / (nk * image_size)
+
+    return distance_norm

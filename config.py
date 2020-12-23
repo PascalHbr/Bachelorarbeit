@@ -5,7 +5,7 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--name', default="trial1", type=str, help="name of the experiment", required=True)
     parser.add_argument('--gpu', type=int, default=None, required=True)
-    parser.add_argument('--dataset', default='deepfashion', help="name of the dataset")
+    parser.add_argument('--dataset', default='pennaction', help="name of the dataset")
 
     # run setting
     parser.add_argument('--mode', default='train', choices=['train', 'predict'])
@@ -18,7 +18,7 @@ def parse_args():
 
     # modes
     parser.add_argument('--batch_size', default=8, type=int,  help="batchsize if not slim and 2 * batchsize if slim")
-    parser.add_argument('--n_parts', default=17, type=int, help="number of parts")
+    parser.add_argument('--n_parts', default=13, type=int, help="number of parts")
     parser.add_argument('--n_features', default=128, type=int,  help="neurons of feature map layer")
     parser.add_argument('--n_c', default=3, type=int)
     parser.add_argument('--residual_dim', default=256, type=int,  help="neurons in residual module of the hourglass")
@@ -44,7 +44,7 @@ def parse_args():
     parser.add_argument('--L_inv_scal', default=0.8, type=float, help="")
     parser.add_argument('--scal', default=0.9, type=float, help="default 0.6 sensible schedule [0.6, 0.6]")
     parser.add_argument('--tps_scal', default=0.05, type=float, help="sensible schedule [0.01, 0.08]")
-    parser.add_argument('--rot_scal', default=0.1, type=float, help="sensible schedule [0.05, 0.6]")
+    parser.add_argument('--rot_scal', default=0.25, type=float, help="sensible schedule [0.05, 0.6]")
     parser.add_argument('--off_scal', default=0.15, type=float, help="sensible schedule [0.05, 0.15]")
     parser.add_argument('--scal_var', default=0.05, type=float, help="sensible schedule [0.05, 0.2]")
     parser.add_argument('--augm_scal', default=1., type=float, help="sensible schedule [0.0, 1.]")

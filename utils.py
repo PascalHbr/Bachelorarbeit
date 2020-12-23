@@ -10,6 +10,8 @@ import os
 from glob import glob
 import cv2
 from natsort import natsorted
+import h5py
+import scipy.io
 
 
 def count_parameters(model):
@@ -196,13 +198,80 @@ def keypoint_metric(prediction, ground_truth, image_size=256):
     return distance_norm
 
 
+def crop_and_resize(image, bbox, keypoint, size=256):
+    image_org = image.copy()
+    for i in range(13):
+        cv2.drawMarker(image_org, (int(keypoint[i][1]), int(keypoint[i][0])), (1., 0, 0),
+                       markerType=cv2.MARKER_CROSS, markerSize=15, thickness=1, line_type=cv2.LINE_AA)
+    plt.imshow(image_org)
+    plt.show()
+
+    h, w, c = image.shape
+    image_crop = image[int(bbox[1]):int(bbox[3]), int(bbox[0]):int(bbox[2]), :]
+    h_, w_, c_ = image_crop.shape
+    long_side = max(h_, w_)
+    diff = max(h_, w_) - min(h_, w_)
+    if diff % 2 != 0:
+        diff += 1
+    padding = diff / 2
+    if long_side == h_:
+        left_padding = min(padding, int(bbox[0]))
+        right_padding = min(long_side - left_padding - w_, w - int(bbox[2]))
+        if left_padding + w_ + right_padding < long_side:
+            left_padding += long_side - (left_padding + w_ + right_padding)
+        upper_padding = 0
+        under_padding = 0
+    else:
+        upper_padding = min(padding, int(bbox[1]))
+        under_padding = min(long_side - upper_padding- h_, h - int(bbox[3]))
+        if upper_padding + h_ + under_padding < long_side:
+            upper_padding += long_side - (upper_padding + h_ + under_padding)
+        left_padding = 0
+        right_padding = 0
+
+    left_bound = int(bbox[0]) - int(left_padding)
+    right_bound = int(bbox[2]) + int(right_padding)
+    upper_bound = int(bbox[1]) - int(upper_padding)
+    under_bound = int(bbox[3]) + int(under_padding)
+
+    keypoint[:, 1] -= left_bound
+    keypoint[:, 0] -= upper_bound
+
+    scale = size / long_side
+    keypoint *= scale
+
+    image_crop = image[upper_bound:under_bound, left_bound:right_bound, :]
+    image_crop = cv2.resize(image_crop, (size, size))
+    for i in range(13):
+        cv2.drawMarker(image_crop, (int(keypoint[i][1]), int(keypoint[i][0])), (1., 0, 0),
+                       markerType=cv2.MARKER_CROSS, markerSize=15, thickness=1, line_type=cv2.LINE_AA)
+    plt.imshow(image_crop)
+    plt.show()
+
+    return image_crop, keypoint
+
+
+
 if __name__ == '__main__':
-    basepath = "/export/scratch/compvis/datasets/human3M_lorenz19"
-    subdir_name = "test"
-    datafiles = natsorted(glob(os.path.join(basepath, subdir_name, "*", "*", "*.jpg")))
-    for i in range(50, 60):
-        image = cv2.imread(datafiles[i])
+    sequencepath = "/export/scratch/compvis/datasets/Penn_Action/frames/"
+    labelpath = "/export/scratch/compvis/datasets/Penn_Action/labels/"
+    sequences = natsorted(glob(os.path.join(sequencepath, "*")))
+    annotations = natsorted(glob(os.path.join(labelpath, "*.mat")))
+
+    for i, img_path in enumerate(sequences):
+        image = cv2.imread(img_path + "/000001.jpg")
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        print (datafiles[i])
-        plt.imshow(image)
-        plt.show()
+        name = annotations[i]
+        print(name)
+        dic = scipy.io.loadmat(annotations[i])
+        nframes = dic['nframes'][0][0]
+        # dic['shape'] = [image.shape for i in range(nframes)]
+        # scipy.io.savemat(name, dic, oned_as='row')
+
+
+    # Select Image
+    # index = 55000
+    # image = cv2.imread(images[index])
+    # image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    # keypoint = keypoints[index].reshape(13, 2)
+    # bbox = bboxes[index]

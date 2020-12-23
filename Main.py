@@ -30,8 +30,17 @@ def main(arg):
     device = torch.device('cuda:' + str(arg.gpu) if torch.cuda.is_available() else 'cpu')
     arg.device = device
 
-    # Choose Dataset
+    # Load Datasets and DataLoader
     dataset = get_dataset(arg.dataset)
+    if arg.dataset == 'pennaction':
+        init_dataset = dataset(size=arg.reconstr_dim, pose_req="front")
+        splits = [int(len(init_dataset) * 0.8), len(init_dataset) - int(len(init_dataset) * 0.8)]
+        train_dataset, test_dataset = torch.utils.data.random_split(init_dataset, splits)
+    else:
+        train_dataset = dataset(size=arg.reconstr_dim, train=True)
+        test_dataset = dataset(size=arg.reconstr_dim, train=False)
+    train_loader = DataLoader(train_dataset, batch_size=bn, shuffle=True, num_workers=4)
+    test_loader = DataLoader(test_dataset, batch_size=bn, num_workers=4)
 
     if mode == 'train':
         # Make new directory
@@ -43,24 +52,21 @@ def main(arg):
         # Save Hyperparameters
         write_hyperparameters(arg.toDict(), model_save_dir)
 
-        # Define Model & Optimizer
+        # Define Model
         model = Model(arg).to(device)
-        print(f'Number of Parameters: {count_parameters(model)}')
         if load_from_ckpt:
             model = load_model(model, model_save_dir, device).to(device)
+        print(f'Number of Parameters: {count_parameters(model)}')
+
+        # Definde Optimizer
         optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
         # Log with wandb
         wandb.init(project='Disentanglement', config=arg, name=arg.name)
         wandb.watch(model, log='all')
-        # Load Datasets and DataLoader
-        train_dataset = dataset(size=arg.reconstr_dim, train=True)
-        test_dataset = dataset(size=arg.reconstr_dim, train=False)
-        train_loader = DataLoader(train_dataset, batch_size=bn, shuffle=True, num_workers=4)
-        test_loader = DataLoader(test_dataset, batch_size=bn, num_workers=4)
 
         # Make Training
-        with torch.autograd.set_detect_anomaly(False):
+        with torch.autograd.set_detect_anomaly(True):
             for epoch in range(epochs+1):
                 # Train on Train Set
                 model.train()
@@ -77,6 +83,8 @@ def main(arg):
                     optimizer.zero_grad()
                     loss.backward()
                     torch.nn.utils.clip_grad_norm_(model.parameters(), arg.clip)
+                    for name, param in model.named_parameters():
+                        print(name, torch.isfinite(param.grad).all())
                     optimizer.step()
                     # Track Loss
                     wandb.log({"Training Loss": loss})
@@ -130,8 +138,6 @@ def main(arg):
         # Load Model and Dataset
         model = Model(arg).to(device)
         model = load_model(model, model_save_dir, device)
-        test_dataset = dataset(size=arg.reconstr_dim, train=False)
-        test_loader = DataLoader(test_dataset, batch_size=bn, num_workers=4)
         model.mode = 'predict'
         model.eval()
 
@@ -144,7 +150,7 @@ def main(arg):
                                    image_rec[original.shape[0]:], part_maps[original.shape[0]:], part_maps[:original.shape[0]],
                                    L_inv_scal, prediction_save_dir, 0, device, show_labels=True)
                 # Track Metric
-                score = keypoint_metric(mu_original, keypoints)
+                # score = keypoint_metric(mu_original, keypoints)
                 if step == 0:
                     break
 

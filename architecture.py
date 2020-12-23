@@ -102,6 +102,7 @@ class E(nn.Module):
         self.hg = Hourglass(depth, residual_dim)  # depth 4 has bottleneck of 4x4
         self.out = Conv(residual_dim, residual_dim, kernel_size=3, stride=1, bn=True, relu=True)
         self.feature = Conv(residual_dim, n_feature, kernel_size=3, stride=1, bn=False, relu=False)
+        self.bn = nn.BatchNorm2d(residual_dim)
         # Preprocessing
         if self.sigma:
             if self.reconstr_dim == 128:

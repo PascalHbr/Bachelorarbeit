@@ -209,6 +209,7 @@ def ThinPlateSpline(U, coord, vector, out_size, device, move=None, scal=None):
     y, x = _transform(T, coord, move, scal)
     input_transformed = _interpolate(U, y, x)
     output = torch.reshape(input_transformed, [num_batch, out_height, out_width, channels]).permute(0, 3, 1, 2).contiguous()
+    output = torch.clamp(output, min=0., max=1.)
     y = torch.reshape(y, [num_batch, 1, out_height, out_width])
     x = torch.reshape(x, [num_batch, 1, out_height, out_width])
     t_arr = torch.cat([y, x], 1)

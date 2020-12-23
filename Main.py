@@ -83,8 +83,8 @@ def main(arg):
                     optimizer.zero_grad()
                     loss.backward()
                     torch.nn.utils.clip_grad_norm_(model.parameters(), arg.clip)
-                    for name, param in model.named_parameters():
-                        print(name, torch.isfinite(param.grad).all())
+                    # for name, param in model.named_parameters():
+                    #     print(name, torch.isfinite(param.grad).all())
                     optimizer.step()
                     # Track Loss
                     wandb.log({"Training Loss": loss})

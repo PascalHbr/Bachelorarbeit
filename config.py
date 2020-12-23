@@ -50,10 +50,10 @@ def parse_args():
     parser.add_argument('--augm_scal', default=1., type=float, help="sensible schedule [0.0, 1.]")
 
     # appearance parameters
-    parser.add_argument('--contrast', default=0.5, type=float,  help="contrast variation")
-    parser.add_argument('--brightness', default=0.3, type=float, help="brightness variation")
-    parser.add_argument('--saturation', default=0.1, type=float, help="saturation variation")
-    parser.add_argument('--hue', default=0.3, type=float,  help="hue variation")
+    parser.add_argument('--contrast', default=0., type=float,  help="contrast variation")
+    parser.add_argument('--brightness', default=0., type=float, help="brightness variation")
+    parser.add_argument('--saturation', default=0., type=float, help="saturation variation")
+    parser.add_argument('--hue', default=0., type=float,  help="hue variation")
     parser.add_argument('--static', default=True)
 
     # transformer parameters

@@ -66,11 +66,15 @@ def main(arg):
         wandb.watch(model, log='all')
 
         # Make Training
-        with torch.autograd.set_detect_anomaly(True):
+        with torch.autograd.set_detect_anomaly(False):
             for epoch in range(epochs+1):
                 # Train on Train Set
                 model.train()
                 model.mode = 'train'
+                # if epoch < 15:
+                #     model.L_mu += 0.2
+                #     if model.L_sep > 0:
+                #         model.L_sep -= 0.05
                 for step, (original, keypoints) in enumerate(train_loader):
                     original, keypoints = original.to(device), keypoints.to(device)
                     image_rec, reconstruct_same_id, loss, rec_loss, transform_loss, precision_loss, mu, L_inv, mu_original = model(original)
@@ -82,9 +86,7 @@ def main(arg):
                     # Zero out gradients
                     optimizer.zero_grad()
                     loss.backward()
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), arg.clip)
-                    # for name, param in model.named_parameters():
-                    #     print(name, torch.isfinite(param.grad).all())
+                    # torch.nn.utils.clip_grad_norm_(model.parameters(), arg.clip)
                     optimizer.step()
                     # Track Loss
                     wandb.log({"Training Loss": loss})

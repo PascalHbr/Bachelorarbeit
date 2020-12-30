@@ -4,6 +4,7 @@ from transformer import ViT
 from gsa_pytorch import GSA
 from LambdaNetworks import LambdaBottleneck
 import torch.nn.functional as F
+import numpy as np
 
 
 def softmax(logit_map):
@@ -24,6 +25,8 @@ class Conv(nn.Module):
         if bn:
             self.bn = nn.InstanceNorm2d(out_dim)
 
+        # self.initialize_weights()
+
     def forward(self, x):
         x = self.conv(x)
         if self.bn is not None:
@@ -31,6 +34,11 @@ class Conv(nn.Module):
         if self.relu is not None:
             x = self.relu(x)
         return x
+
+    def initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_uniform_(m.weight, nonlinearity='leaky_relu')
 
 
 class Residual(nn.Module):
@@ -101,13 +109,18 @@ class E(nn.Module):
         self.reconstr_dim = reconstr_dim
         self.hg = Hourglass(depth, residual_dim)  # depth 4 has bottleneck of 4x4
         self.out = Conv(residual_dim, residual_dim, kernel_size=3, stride=1, bn=True, relu=True)
-        self.feature = Conv(residual_dim, n_feature, kernel_size=3, stride=1, bn=False, relu=False)
+        if self.sigma:
+            self.feature = Conv(residual_dim, n_feature + 1, kernel_size=3, stride=1, bn=False, relu=False)
+        else:
+            self.feature = Conv(residual_dim, n_feature, kernel_size=3, stride=1, bn=False, relu=False)
         self.bn = nn.BatchNorm2d(residual_dim)
         # Preprocessing
         if self.sigma:
             if self.reconstr_dim == 128:
                 self.preprocess_sigma = nn.Sequential(Conv(3, 64, kernel_size=6, stride=2, bn=True, relu=True),
-                                                      Residual(64, residual_dim)
+                                                      Residual(64, 128),
+                                                      Residual(128, 128),
+                                                      Residual(128, residual_dim)
                                                       )
             elif self.reconstr_dim == 256:
                 self.preprocess_sigma = nn.Sequential(Conv(3, 64, kernel_size=6, stride=2, bn=True, relu=True),
@@ -116,7 +129,7 @@ class E(nn.Module):
                                                       Residual(128, 128),
                                                       Residual(128, residual_dim)
                                                       )
-            self.map_transform = Conv(n_feature, residual_dim, 3, 1, bn=False, relu=False)  # channels for addition must be increased
+            self.map_transform = Conv(n_feature + 1, residual_dim, 3, 1, bn=False, relu=False)  # channels for addition must be increased
 
     def forward(self, x):
         if self.sigma:
@@ -136,37 +149,28 @@ class E(nn.Module):
 
 
 class E_transformer(nn.Module):
-    def __init__(self, arg):
+    def __init__(self, arg, sigma=True):
         super(E_transformer, self).__init__()
-        self.n_parts = arg.n_parts
+        self.sigma = sigma
+        if self.sigma:
+            self.n_parts = arg.n_parts
+        else:
+            self.n_parts = arg.n_features
         self.residual_dim = arg.residual_dim
         self.reconstr_dim = arg.reconstr_dim
         self.dropout = nn.Dropout(arg.p_dropout)
-        # self.VT = ViT(
-        #     image_size=arg.reconstr_dim,
-        #     patch_size=arg.t_patch_size,
-        #     dim=arg.t_dim,
-        #     depth=arg.t_depth,
-        #     heads=arg.t_heads,
-        #     mlp_dim=arg.t_mlp_dim,
-        #     dropout=0.1,
-        #     emb_dropout=0.1,
-        #     nk=arg.n_parts,
-        #     n_token=arg.t_n_token,
-        #     use_first=arg.t_use_first
-        # )
-        self.relu = nn.LeakyReLU()
-        self.GSA1 = GSA(
-                        dim=arg.gsa_dim,
-                        dim_out=arg.gsa_dim_out,
-                        dim_key=arg.gsa_dim_key,
-                        heads=arg.gsa_heads,
-                        rel_pos_length=arg.gsa_length  # in paper, set to max(height, width)
-                        )
-        self.norm1 = nn.InstanceNorm2d(arg.dim_out)
-        self.out = Conv(arg.gsa_dim_out, arg.gsa_dim_out, kernel_size=3, stride=1, bn=True, relu=True)
-        self.feature = Conv(arg.gsa_dim_out, self.n_parts, kernel_size=3, stride=1, bn=False, relu=False)
-
+        self.VT = ViT(
+                image_size=64,
+                patch_size=arg.t_patch_size,
+                dim=arg.t_dim,
+                depth=arg.t_depth,
+                heads=arg.t_heads,
+                mlp_dim=arg.t_mlp_dim,
+                dropout=0.1,
+                channels=self.residual_dim,
+                emb_dropout=0.1,
+                nk=self.n_parts+1
+            )
         # Preprocessing
         if self.reconstr_dim == 128:
             self.preprocess_sigma = nn.Sequential(Conv(3, 64, kernel_size=6, stride=2, bn=True, relu=True),
@@ -180,22 +184,22 @@ class E_transformer(nn.Module):
                                                   Residual(128, self.residual_dim)
                                                   )
 
-        self.map_transform = Conv(self.n_parts, arg.residual_dim, 3, 1, bn=True, relu=True)  # channels for addition must be increased
+        self.map_transform = Conv(self.n_parts+1, arg.residual_dim, 3, 1, bn=False, relu=False)  # channels for addition must be increased
 
 
     def forward(self, x):
-        x = self.preprocess_sigma(x)
-        out = self.relu(self.norm1(self.GSA1(x)))
-        out = self.dropout(out)
-        out = self.out(out)
+        if self.sigma:
+            x = self.preprocess_sigma(x)
+        feature_map = self.VT(x)
 
         # Get Normalized Feature Maps for E_sigma
-        feature_map = self.feature(out)
-        map_normalized = softmax(feature_map)
-        map_transformed = self.map_transform(map_normalized)
-        stack = map_transformed + x
-        return feature_map, map_normalized, stack
-
+        if self.sigma:
+            map_normalized = softmax(feature_map)
+            map_transformed = self.map_transform(map_normalized)
+            stack = map_transformed + x
+            return feature_map, map_normalized, stack
+        else:
+            return feature_map
 
 
 class Nccuc(nn.Module):
@@ -207,11 +211,18 @@ class Nccuc(nn.Module):
         self.up_Conv = nn.ConvTranspose2d(in_channels=filters[0], out_channels=filters[1], kernel_size=4, stride=2,
                                           padding=1)
 
+        # self.initialize_weights()
+
     def forward(self, input_A, input_B):
         down_conv = self.down_Conv(input_A)
         up_conv = self.up_Conv(down_conv)
         out = torch.cat((up_conv, input_B), dim=1)
         return out
+
+    def initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.ConvTranspose2d):
+                nn.init.kaiming_uniform_(m.weight, nonlinearity='leaky_relu')
 
 
 class Decoder(nn.Module):

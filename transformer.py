@@ -3,7 +3,57 @@ import torch.nn.functional as F
 from einops import rearrange, repeat
 from torch import nn
 from performer_pytorch import SelfAttention
-from gsa_pytorch import GSA
+
+class Conv(nn.Module):
+    def __init__(self, inp_dim, out_dim, kernel_size=3, stride=1, bn=True, relu=True):
+        super(Conv, self).__init__()
+        self.inp_dim = inp_dim
+        self.conv = nn.Conv2d(inp_dim, out_dim, kernel_size, stride, padding=(kernel_size - 1) // 2, bias=True)
+        self.relu = None
+        self.bn = None
+        if relu:
+            self.relu = nn.LeakyReLU()
+        if bn:
+            self.bn = nn.InstanceNorm2d(out_dim)
+
+        # self.initialize_weights()
+
+    def forward(self, x):
+        x = self.conv(x)
+        if self.bn is not None:
+            x = self.bn(x)
+        if self.relu is not None:
+            x = self.relu(x)
+        return x
+
+    def initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_uniform_(m.weight, nonlinearity='leaky_relu')
+
+
+class ResidualBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, downsample=None):
+        super(ResidualBlock, self).__init__()
+        self.conv1 = Conv(in_channels, out_channels, kernel_size=3, stride=1, bn=False, relu=False)
+        self.bn1 = nn.BatchNorm2d(out_channels)
+        self.relu = nn.ReLU(inplace=True)
+        self.conv2 = Conv(in_channels, out_channels, kernel_size=3, stride=1, bn=False, relu=False)
+        self.bn2 = nn.BatchNorm2d(out_channels)
+        self.downsample = downsample
+
+    def forward(self, x):
+        residual = x
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = self.relu(out)
+        out = self.conv2(out)
+        out = self.bn2(out)
+        if self.downsample:
+            residual = self.downsample(x)
+        out += residual
+        out = self.relu(out)
+        return out
 
 MIN_NUM_PATCHES = 16
 
@@ -36,14 +86,15 @@ class FeedForward(nn.Module):
         return self.net(x)
 
 class Attention(nn.Module):
-    def __init__(self, dim, heads = 8, dropout = 0.):
+    def __init__(self, dim, heads = 8, dim_head = 64, dropout = 0.):
         super().__init__()
+        inner_dim = dim_head *  heads
         self.heads = heads
         self.scale = dim ** -0.5
 
-        self.to_qkv = nn.Linear(dim, dim * 3, bias = False)
+        self.to_qkv = nn.Linear(dim, inner_dim * 3, bias = False)
         self.to_out = nn.Sequential(
-            nn.Linear(dim, dim),
+            nn.Linear(inner_dim, dim),
             nn.Dropout(dropout)
         )
 
@@ -70,13 +121,14 @@ class Attention(nn.Module):
         return out
 
 
+
 class Transformer(nn.Module):
-    def __init__(self, dim, depth, heads, mlp_dim, dropout):
+    def __init__(self, dim, depth, heads, dim_head, mlp_dim, dropout):
         super().__init__()
         self.layers = nn.ModuleList([])
         for _ in range(depth):
             self.layers.append(nn.ModuleList([
-                Residual(PreNorm(dim, SelfAttention(dim, heads = heads, dropout = dropout))),
+                Residual(PreNorm(dim, Attention(dim, heads = heads, dim_head = dim_head, dropout = dropout))),
                 Residual(PreNorm(dim, FeedForward(dim, mlp_dim, dropout = dropout)))
             ]))
     def forward(self, x, mask = None):
@@ -86,91 +138,81 @@ class Transformer(nn.Module):
         return x
 
 class ViT(nn.Module):
-    def __init__(self, *, image_size, patch_size, dim, depth, heads, mlp_dim, nk, n_token, use_first, channels = 3, dropout = 0., emb_dropout = 0.):
+    def __init__(self, *, image_size, patch_size, dim, depth, heads, mlp_dim, nk, pool = 'mean', channels=3, dim_head = 64, dropout = 0., emb_dropout = 0.):
         super().__init__()
         assert image_size % patch_size == 0, 'Image dimensions must be divisible by the patch size.'
         num_patches = (image_size // patch_size) ** 2
         patch_dim = channels * patch_size ** 2
         assert num_patches > MIN_NUM_PATCHES, f'your number of patches ({num_patches}) is way too small for attention to be effective (at least 16). Try decreasing your patch size'
+        assert pool in {'cls', 'mean'}, 'pool type must be either cls (cls token) or mean (mean pooling)'
 
-        self.nk = nk
         self.patch_size = patch_size
-        self.n_token = n_token
-        self.use_first = use_first
+        self.map_size = int(num_patches**0.5)
+        self.nk = nk
 
-        self.pos_embedding = nn.Parameter(torch.randn(1, num_patches + n_token, dim))
+        self.pos_embedding = nn.Parameter(torch.randn(1, num_patches, dim))
         self.patch_to_embedding = nn.Linear(patch_dim, dim)
-        self.cls_token = nn.Parameter(torch.randn(1, n_token, dim))
         self.dropout = nn.Dropout(emb_dropout)
 
-        self.transformer = Transformer(dim, depth, heads, mlp_dim, dropout)
-
-        self.to_cls_token = nn.Identity()
-        self.up_conv1 = nn.ConvTranspose2d(in_channels=self.nk, out_channels=self.nk, kernel_size=2, stride=2,
-                                           padding=0)
-        self.up_conv2 = nn.ConvTranspose2d(in_channels=self.nk, out_channels=self.nk, kernel_size=2, stride=2,
-                                           padding=0)
-        self.up_conv3 = nn.ConvTranspose2d(in_channels=self.nk, out_channels=self.nk, kernel_size=2, stride=2,
-                                           padding=0)
+        self.transformer = Transformer(dim, depth, heads, dim_head, mlp_dim, dropout)
         self.relu = nn.LeakyReLU()
-        self.bn1 = nn.InstanceNorm2d(self.nk)
-        self.bn2 = nn.InstanceNorm2d(self.nk)
-        self.bn3 = nn.InstanceNorm2d(self.nk)
+        self.bn1 = nn.InstanceNorm2d(channels)
+        self.bn2 = nn.InstanceNorm2d(channels)
+        self.bn3 = nn.InstanceNorm2d(channels)
+        self.up_Conv1 = nn.Sequential(ResidualBlock(channels, channels),
+                                      nn.ConvTranspose2d(in_channels=channels, out_channels=channels, kernel_size=4,
+                                                         stride=2, padding=1),
+                                      self.bn1,
+                                      self.relu)
+
+        self.up_Conv2 = nn.Sequential(ResidualBlock(channels, channels),
+                                      nn.ConvTranspose2d(in_channels=channels, out_channels=channels, kernel_size=4,
+                                                         stride=2, padding=1),
+                                      self.bn2,
+                                      self.relu)
+
+        self.up_Conv3 = nn.Sequential(ResidualBlock(channels, channels),
+                                      nn.ConvTranspose2d(in_channels=channels, out_channels=channels, kernel_size=4,
+                                                         stride=2, padding=1),
+                                      self.bn3,
+                                      self.relu)
+
+        self.to_partmap = Conv(channels, nk, kernel_size=3, stride=1, bn=False, relu=False)
 
 
-        if self.use_first:
-            self.mlp_head = nn.Sequential(
-                nn.Linear(self.n_token* dim, 1024),
-                nn.BatchNorm1d(1024)
-            )
-        else:
-            self.mlp_head = nn.Sequential(
-                nn.Linear(num_patches * dim, 1024),
-                nn.BatchNorm1d(1024),
-            )
-
-    def forward(self, img, mask=None):
+    def forward(self, img, mask = None):
         p = self.patch_size
 
-        x = rearrange(img, 'b c (h p1) (w p2) -> b (h w) (p1 p2 c)', p1=p, p2=p)
+        x = rearrange(img, 'b c (h p1) (w p2) -> b (h w) (p1 p2 c)', p1 = p, p2 = p)
         x = self.patch_to_embedding(x)
-        b, n, d = x.shape
+        b, n, c = x.shape
 
-        cls_tokens = repeat(self.cls_token, '() n d -> b n d', b=b)
-        x = torch.cat((cls_tokens, x), dim=1)
-        x += self.pos_embedding[:, :(n + self.nk)]
+        x += self.pos_embedding[:, :n]
         x = self.dropout(x)
+        x = self.transformer(x, mask).permute(0, 2, 1).reshape(b, c, self.map_size, self.map_size)
 
-        x = self.transformer(x, mask)
-        if self.use_first:
-            x = self.to_cls_token(x[:, :self.n_token])
-        else:
-            x = self.to_cls_token(x[:, self.n_token:])
-        x = x.reshape(b, -1)
-        x = self.mlp_head(x)
+        x = self.up_Conv1(x)
+        x = self.up_Conv2(x)
+        x = self.up_Conv3(x)
 
-        x = x.reshape(b, self.nk, 8, 8)
-        x = self.up_conv1(x)
-        x = self.bn1(x)
-        x = self.relu(x)
-        x = self.up_conv2(x)
-        x = self.bn2(x)
-        x = self.relu(x)
-        x = self.up_conv3(x)
-        x = self.bn3(x)
-        x = self.relu(x)
+        x = self.to_partmap(x)
 
         return x
 
-
 if __name__ == '__main__':
-    gsa = GSA(
+    VT = ViT(
+        image_size=64,
+        patch_size=4,
         dim=256,
-        dim_out=64,
-        dim_key=32,
+        depth=8,
         heads=8,
-        rel_pos_length=256  # in paper, set to max(height, width). you can also turn this off by omitting this line
+        mlp_dim=256,
+        dropout=0.1,
+        channels=256,
+        emb_dropout=0.1,
+        nk=17
     )
-    part_map = torch.randn(1, 256, 64, 64)
-    out = gsa(part_map)
+
+    img = torch.randn(8, 256, 64, 64)
+    out = VT(img)
     print(out.shape)

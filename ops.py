@@ -2,6 +2,14 @@ import torch
 import torch.nn.functional as F
 import kornia.augmentation as K
 from opt_einsum import contract
+import torch.nn as nn
+import numpy as np
+
+
+def softmax(logit_map):
+    bn, kn, h, w = logit_map.shape
+    map_norm = nn.Softmax(dim=2)(logit_map.reshape(bn, kn, -1)).reshape(bn, kn, h, w)
+    return map_norm
 
 
 def AbsDetJacobian(batch_meshgrid, device):
@@ -95,15 +103,16 @@ def get_mu_and_prec(part_maps, device, L_inv_scal):
     b_sq_add_c_sq = stddev[:, :, 1, 1]
     eps = 1e-12
 
-    a = torch.sqrt(a_sq + eps)  # Σ = L L^T Prec = Σ^-1  = L^T^-1 * L^-1  ->looking for L^-1 but first L = [[a, 0], [b, c]
+    a = torch.sqrt(torch.abs(a_sq + eps))  # Σ = L L^T Prec = Σ^-1  = L^T^-1 * L^-1  ->looking for L^-1 but first L = [[a, 0], [b, c]
     b = a_b / (a + eps)
-    c = torch.sqrt(b_sq_add_c_sq - b ** 2 + eps)
+    c = torch.sqrt(torch.abs(b_sq_add_c_sq - b ** 2 + eps))
     z = torch.zeros_like(a)
 
     det = (a * c).unsqueeze(-1).unsqueeze(-1)
     row_1 = torch.cat((c.unsqueeze(-1), z.unsqueeze(-1)), dim=-1).unsqueeze(-2)
     row_2 = torch.cat((-b.unsqueeze(-1), a.unsqueeze(-1)), dim=-1).unsqueeze(-2)
     L_inv = L_inv_scal / (det + eps) * torch.cat((row_1, row_2), dim=-2)  # L^⁻1 = 1/(ac)* [[c, 0], [-b, a]
+    # L_inv = torch.clamp(L_inv, min=-1000., max=1000.)
 
     return mu, L_inv
 
@@ -125,6 +134,10 @@ def get_heat_map(mu, L_inv, device):
     heat = 1 / (1 + proj_precision)
     heat = heat.reshape(bn, nk, h, w)  # bn number parts width height
 
+    # Background
+    eps = 1e-12
+    heat[:, -1] = 1 / (heat[:, -1] + eps)
+
     return heat
 
 
@@ -133,7 +146,13 @@ def precision_dist_op(precision, dist, part_depth, nk, h, w):
     proj_precision = torch.sum(proj_precision, -2)  # sum x and y axis
     heat = 1 / (1 + proj_precision)
     heat = heat.reshape(-1, nk, h, w)  # bn number parts width height
+
+    # Background
+    eps = 1e-12
+    heat[:, -1] = 1 / (heat[:, -1] + eps)
+
     part_heat = heat[:, :part_depth]
+
     return heat, part_heat
 
 
@@ -351,12 +370,13 @@ def loss_fn(bn, mu, L_inv, mu_t, stddev_t, reconstruct_same_id, image_rec, fold_
     distance_metric = torch.abs(img_difference)
 
     if fold_with_shape:
-        fold_img_squared = fold_img_with_L_inv(distance_metric, mu.detach(), L_inv.detach(),
+        fold_img_squared = fold_img_with_L_inv(distance_metric, mu[:, :-1].detach(), L_inv[:, :-1].detach(),
                                                l_2_scal, l_2_threshold, device)
     else:
-        fold_img_squared, heat_mask_l2 = fold_img_with_mu(distance_metric, mu.detach(), l_2_scal, l_2_threshold, device)
+        fold_img_squared, heat_mask_l2 = fold_img_with_mu(distance_metric, mu[:, :-1].detach(), l_2_scal, l_2_threshold, device)
 
     rec_loss = torch.mean(torch.sum(fold_img_squared, dim=[2, 3]))
+    # rec_loss = nn.L1Loss()(image_rec, reconstruct_same_id)
 
     total_loss = L_rec * rec_loss + L_mu * transform_loss + L_cov * precision_loss + L_sep * sep_loss
     return total_loss, rec_loss, transform_loss, precision_loss

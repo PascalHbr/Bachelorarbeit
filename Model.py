@@ -5,6 +5,7 @@ from opt_einsum import contract
 from architecture import E, Decoder, E_transformer
 from ops import prepare_pairs, AbsDetJacobian, feat_mu_to_enc, get_local_part_appearances, get_mu_and_prec, loss_fn
 from transformations import tps_parameters, make_input_tps_param, ThinPlateSpline
+import numpy as np
 
 
 class Model(nn.Module):
@@ -38,10 +39,11 @@ class Model(nn.Module):
         self.scal_var = arg.scal_var
         self.augm_scal = arg.augm_scal
         self.fold_with_shape = arg.fold_with_shape
-        self.E_sigma = E(self.depth_s, self.n_parts, self.residual_dim, self.p_dropout, sigma=True)
-        # self.E_sigma = E_transformer(self.arg)
-        self.E_alpha = E(self.depth_a, self.n_features, self.residual_dim, self.p_dropout, sigma=False)
-        self.decoder = Decoder(self.n_parts, self.n_features, self.reconstr_dim)
+        self.E_sigma = E(self.depth_s, self.n_parts, self.residual_dim, self.p_dropout, sigma=True, reconstr_dim=arg.reconstr_dim)
+        # self.E_sigma = E_transformer(self.arg, sigma=True)
+        self.E_alpha = E(self.depth_a, self.n_features, self.residual_dim, self.p_dropout, sigma=False, reconstr_dim=arg.reconstr_dim)
+        # self.E_alpha = E_transformer(self.arg, sigma=False)
+        self.decoder = Decoder(self.n_parts + 1, self.n_features, self.reconstr_dim)
 
 
     def forward(self, x):
@@ -88,8 +90,8 @@ class Model(nn.Module):
 
         if self.mode == 'predict':
             original_part_maps_raw, original_part_maps_norm, original_sum_part_maps = self.E_sigma(x)
-            return original_part_maps_raw, mu_original, image_rec, part_maps_raw, part_maps_raw, reconstruct_same_id
+            return original_part_maps_raw, mu_original[:, :-1], image_rec, part_maps_raw, part_maps_raw, reconstruct_same_id
 
         elif self.mode == 'train':
-            return image_rec, reconstruct_same_id, total_loss, rec_loss, transform_loss, precision_loss, mu, L_inv, mu_original
+            return image_rec, reconstruct_same_id, total_loss, rec_loss, transform_loss, precision_loss, mu[:, :-1], L_inv[:, :-1], mu_original[:, :-1]
 

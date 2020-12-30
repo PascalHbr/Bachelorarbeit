@@ -31,8 +31,11 @@ def make_visualization(original, original_part_maps, labels, reconstruction, sha
                        fmap_app, L_inv_scale, directory, epoch, device, index=0, show_labels=False):
 
     # Color List for Parts
-    color_list = ['black', 'gray', 'brown', 'chocolate', 'orange', 'gold', 'olive', 'lawngreen', 'aquamarine',
-                  'dodgerblue', 'midnightblue', 'mediumpurple', 'indigo', 'magenta', 'pink', 'springgreen']
+    color_list = ['black', 'gray', 'brown', 'chocolate', 'orange', 'gold', 'olive', 'lawngreen', 'aquamarine', 'green',
+                  'dodgerblue', 'midnightblue', 'mediumpurple', 'indigo', 'magenta', 'pink', 'springgreen', 'red']
+
+    nk = original_part_maps.shape[1]
+
     # Get Maps
     fmap_shape_norm = softmax(fmap_shape)
     mu_shape, L_inv_shape = get_mu_and_prec(fmap_shape_norm, device, L_inv_scale)
@@ -81,9 +84,9 @@ def make_visualization(original, original_part_maps, labels, reconstruction, sha
         axs_head[5, 3].imshow(img_with_marker[3])
 
         # Part Visualization Shape Stream
-        fig_shape, axs_shape = plt.subplots(8, 6, figsize=(8, 8))
+        fig_shape, axs_shape = plt.subplots(9, 6, figsize=(8, 8))
         fig_shape.suptitle("Part Visualization Shape Stream", fontsize="x-large")
-        for i in range(16):
+        for i in range(nk):
             cmap = colors.LinearSegmentedColormap.from_list('my_colormap',
                                                             ['white', color_list[i]],
                                                             256)
@@ -96,16 +99,16 @@ def make_visualization(original, original_part_maps, labels, reconstruction, sha
             axs_shape[int(i / 2), (i % 2) * 3 + 1].imshow(fmap_shape_norm[index][i].cpu().detach().numpy(), cmap=cmap)
             axs_shape[int(i / 2), (i % 2) * 3 + 2].imshow(heat_map_shape[index][i].cpu().detach().numpy(), cmap=cmap)
 
-            if i == 15:
+            if i == nk - 1:
                 cmap = colors.LinearSegmentedColormap.from_list('my_colormap',
                                                                 ['white', 'black'],
                                                                 256)
                 axs_head[1, 1].imshow(overlay_shape.cpu().detach().numpy(), cmap=cmap)
 
         # Part Visualization Appearance Stream
-        fig_app, axs_app = plt.subplots(8, 6, figsize=(8, 8))
+        fig_app, axs_app = plt.subplots(9, 6, figsize=(8, 8))
         fig_app.suptitle("Part Visualization Appearance Stream", fontsize="x-large")
-        for i in range(16):
+        for i in range(nk):
             cmap = colors.LinearSegmentedColormap.from_list('my_colormap',
                                                             ['white', color_list[i]],
                                                             256)
@@ -118,7 +121,7 @@ def make_visualization(original, original_part_maps, labels, reconstruction, sha
             axs_app[int(i / 2), (i % 2) * 3 + 1].imshow(fmap_app_norm[index][i].cpu().detach().numpy(), cmap=cmap)
             axs_app[int(i / 2), (i % 2) * 3 + 2].imshow(heat_map_app[index][i].cpu().detach().numpy(), cmap=cmap)
 
-            if i == 15:
+            if i == nk - 1:
                 cmap = colors.LinearSegmentedColormap.from_list('my_colormap',
                                                                 ['white', 'black'],
                                                                 256)
@@ -138,10 +141,16 @@ def make_visualization(original, original_part_maps, labels, reconstruction, sha
 
 
 def visualize_keypoints(img, fmap, labels, L_inv_scale, device, show_labels):
+    bn, nk, h, w = fmap.shape
+
     # Make Heatmap Overlay
     fmap_norm = softmax(fmap)
     mu, L_inv = get_mu_and_prec(fmap_norm, device, L_inv_scale)
     heat_map = get_heat_map(mu, L_inv, device)
+
+    norm = torch.sum(heat_map, 1, keepdim=True) + 1
+    heat_map = heat_map / norm
+
     heat_map_overlay = torch.sum(heat_map, dim=1).cpu().detach().numpy()
 
     # Mark Keypoints

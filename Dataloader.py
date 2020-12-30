@@ -139,6 +139,34 @@ class PennAction(Dataset):
         if long_side < 50:
             return None, None, False
 
+        # Don't just use bounding box but also a little bit more (else heads are cut off in TPS)
+        padd_add = 30
+        if long_side == h_:
+            padd_long = min(h-h_, padd_add)
+            if padd_long % 2 != 0:
+                padd_long += 1
+            padd_up = min(int(bbox[1]), padd_long / 2)
+            padd_down = min(h-int(bbox[3]), padd_long-padd_up)
+            if padd_up + padd_down < padd_long:
+                padd_up += padd_long - (padd_up + padd_down)
+            bbox[1] -= padd_up
+            bbox[3] += padd_down
+            h_, w_ = int(bbox[3]) - int(bbox[1]), int(bbox[2]) - int(bbox[0])
+            long_side = max(h_, w_)
+        else:
+            padd_long = min(w-w_, padd_add)
+            if padd_long % 2 != 0:
+                padd_long += 1
+            padd_left = min(int(bbox[0]), padd_long / 2)
+            padd_right = min(h-int(bbox[2]), padd_long-padd_left)
+            if padd_left + padd_right < padd_long:
+                padd_left += padd_long - (padd_left + padd_right)
+            bbox[0] -= padd_left
+            bbox[2] += padd_right
+            h_, w_ = int(bbox[3]) - int(bbox[1]), int(bbox[2]) - int(bbox[0])
+            long_side = max(h_, w_)
+
+        # Padd the sides to make it quadratic
         diff = max(h_, w_) - min(h_, w_)
         if diff % 2 != 0:
             diff += 1
@@ -158,18 +186,22 @@ class PennAction(Dataset):
             left_padding = 0
             right_padding = 0
 
+        # Adjust boundaries
         left_bound = int(bbox[0]) - int(left_padding)
         right_bound = int(bbox[2]) + int(right_padding)
         upper_bound = int(bbox[1]) - int(upper_padding)
         under_bound = int(bbox[3]) + int(under_padding)
-
         boundaries = [left_bound, right_bound, upper_bound, under_bound]
 
+        # Adjust keypoints
         keypoint[:, 1] -= left_bound
         keypoint[:, 0] -= upper_bound
-
         scale = self.size / long_side
         keypoint *= scale
+
+        # Sometimes boundaries are outside the image -> skip these images
+        if ((right_bound - left_bound) - (under_bound - upper_bound) != 0) or any(bound < 0 for bound in boundaries):
+            return None, None, False
 
         return keypoint, boundaries, True
 
@@ -178,8 +210,9 @@ class PennAction(Dataset):
         image = cv2.imread(self.images[index])
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         left_bound, right_bound, upper_bound, under_bound = self.boundaries[index]
-
         image = image[upper_bound:under_bound, left_bound:right_bound, :]
+        if image.shape[0] != image.shape[1]:
+            print("SHIT")
         image = cv2.resize(image, (self.size, self.size))
         keypoint = self.keypoints[index]
 

@@ -5,6 +5,8 @@ from gsa_pytorch import GSA
 from LambdaNetworks import LambdaBottleneck
 import torch.nn.functional as F
 import numpy as np
+from ops import get_heat_map, get_mu_and_prec
+from detr_model import DETR
 
 
 def softmax(logit_map):
@@ -102,9 +104,11 @@ class Hourglass(nn.Module):
 
 
 class E(nn.Module):
-    def __init__(self, depth, n_feature, residual_dim, p_dropout, sigma=True, reconstr_dim=256):
+    def __init__(self, depth, n_feature, residual_dim, p_dropout, device, L_inv_scale, sigma=True, reconstr_dim=256):
         super(E, self).__init__()
         self.sigma = sigma
+        self.device = device
+        self.L_inv_scale = L_inv_scale
         self.dropout = nn.Dropout(p_dropout)
         self.reconstr_dim = reconstr_dim
         self.hg = Hourglass(depth, residual_dim)  # depth 4 has bottleneck of 4x4
@@ -143,6 +147,14 @@ class E(nn.Module):
             map_normalized = softmax(feature_map)
             map_transformed = self.map_transform(map_normalized)
             stack = map_transformed + x
+
+            # mu, L_inv = get_mu_and_prec(map_normalized, self.device, self.L_inv_scale)
+            # heat_map = get_heat_map(mu, L_inv, self.device)
+            # norm = torch.sum(heat_map, 1, keepdim=True) + 1
+            # heat_map = heat_map / norm
+            #
+            # map_transformed = self.map_transform(heat_map)
+
             return feature_map, map_normalized, stack
         else:
             return feature_map
@@ -200,6 +212,25 @@ class E_transformer(nn.Module):
             return feature_map, map_normalized, stack
         else:
             return feature_map
+
+
+class Transformer(nn.Module):
+    def __init__(self, n_feature, residual_dim, device, L_inv_scale):
+        super(Transformer, self).__init__()
+        self.device = device
+        self.L_inv_scale = L_inv_scale
+        self.detr = DETR()
+        self.map_transform = Conv(n_feature + 1, residual_dim, 3, 1, bn=False, relu=False)  # channels for addition must be increased
+
+    def forward(self, x):
+        second, mu, L_inv = self.detr(x)
+        heat_map = get_heat_map(mu, L_inv, self.device)
+        norm = torch.sum(heat_map, 1, keepdim=True) + 1
+        heat_map = heat_map / norm
+        map_transformed = self.map_transform(heat_map)
+        stack = second + map_transformed
+
+        return mu, L_inv, heat_map, heat_map, stack
 
 
 class Nccuc(nn.Module):

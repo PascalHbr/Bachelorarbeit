@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from opt_einsum import contract
-from architecture import E, Decoder, E_transformer
+from architecture import E, Decoder, E_transformer, Transformer
 from ops import prepare_pairs, AbsDetJacobian, feat_mu_to_enc, get_local_part_appearances, get_mu_and_prec, loss_fn
 from transformations import tps_parameters, make_input_tps_param, ThinPlateSpline
 import numpy as np
@@ -38,10 +38,14 @@ class Model(nn.Module):
         self.off_scal = arg.off_scal
         self.scal_var = arg.scal_var
         self.augm_scal = arg.augm_scal
+        self.static = arg.static
         self.fold_with_shape = arg.fold_with_shape
-        self.E_sigma = E(self.depth_s, self.n_parts, self.residual_dim, self.p_dropout, sigma=True, reconstr_dim=arg.reconstr_dim)
+        # self.E_sigma = E(self.depth_s, self.n_parts, self.residual_dim, self.p_dropout, self.device, self.L_inv_scal,
+        #                  sigma=True, reconstr_dim=arg.reconstr_dim)
         # self.E_sigma = E_transformer(self.arg, sigma=True)
-        self.E_alpha = E(self.depth_a, self.n_features, self.residual_dim, self.p_dropout, sigma=False, reconstr_dim=arg.reconstr_dim)
+        self.E_sigma = Transformer(self.n_parts, self.residual_dim, self.device, self.L_inv_scal)
+        self.E_alpha = E(self.depth_a, self.n_features, self.residual_dim, self.p_dropout, self.device, self.L_inv_scal,
+                         sigma=False, reconstr_dim=arg.reconstr_dim)
         # self.E_alpha = E_transformer(self.arg, sigma=False)
         self.decoder = Decoder(self.n_parts + 1, self.n_features, self.reconstr_dim)
 
@@ -61,8 +65,9 @@ class Model(nn.Module):
         volume_mesh = AbsDetJacobian(transform_mesh, self.device)
 
         # encoding
-        part_maps_raw, part_maps_norm, sum_part_maps = self.E_sigma(image_in)
-        mu, L_inv = get_mu_and_prec(part_maps_norm, self.device, self.L_inv_scal)
+        # part_maps_raw, part_maps_norm, sum_part_maps = self.E_sigma(image_in)
+        # mu, L_inv = get_mu_and_prec(part_maps_norm, self.device, self.L_inv_scal)
+        mu, L_inv, part_maps_raw, part_maps_norm, sum_part_maps = self.E_sigma(image_in)
         raw_features = self.E_alpha(sum_part_maps)
         features = get_local_part_appearances(raw_features, part_maps_norm)
 
@@ -75,7 +80,7 @@ class Model(nn.Module):
         stddev_t = contract('akij, amnij -> akmn', integrant, transform_mesh_out_prod) - mu_out_prod
 
         # processing
-        encoding = feat_mu_to_enc(features, mu, L_inv, self.device, self.covariance, self.reconstr_dim)
+        encoding = feat_mu_to_enc(features, mu, L_inv, self.device, self.covariance, self.reconstr_dim, self.static)
         reconstruct_same_id = self.decoder(encoding)
 
         total_loss, rec_loss, transform_loss, precision_loss = loss_fn(batch_size, mu, L_inv, mu_t, stddev_t,
@@ -85,8 +90,9 @@ class Model(nn.Module):
                                                                        self.device)
 
         # norms
-        original_part_maps_raw, original_part_maps_norm, original_sum_part_maps = self.E_sigma(x)
-        mu_original, L_inv_original = get_mu_and_prec(original_part_maps_norm, self.device, self.L_inv_scal)
+        # original_part_maps_raw, original_part_maps_norm, original_sum_part_maps = self.E_sigma(x)
+        # mu_original, L_inv_original = get_mu_and_prec(original_part_maps_norm, self.device, self.L_inv_scal)
+        mu_original, L_inv_original, original_part_maps_raw, original_part_maps_norm, original_sum_part_maps = self.E_sigma(x)
 
         if self.mode == 'predict':
             original_part_maps_raw, original_part_maps_norm, original_sum_part_maps = self.E_sigma(x)

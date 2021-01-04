@@ -172,7 +172,7 @@ def reverse_batch(tensor, n_reverse):
     return tensor_rev
 
 
-def feat_mu_to_enc(features, mu, L_inv, device, covariance, reconstr_dim, static=True, n_reverse=2, feat_shape=True,
+def feat_mu_to_enc(features, mu, L_inv, device, covariance, reconstr_dim, static=True, n_reverse=5, feat_shape=True,
                    heat_feat_normalize=True, range=10):
     """
     :param features: tensor shape   bn, nk, nf
@@ -195,8 +195,7 @@ def feat_mu_to_enc(features, mu, L_inv, device, covariance, reconstr_dim, static
         # reverse_features = torch.cat([features[bn // 2:], features[:bn // 2]], dim=0)
         reverse_features = features
     else:
-        # reverse_features = reverse_batch(features, n_reverse)
-        reverse_features = torch.cat([features[bn // 2:], features[:bn // 2]], dim=0)
+        reverse_features = reverse_batch(features, n_reverse)
 
     encoding_list = []
     circular_precision = range * torch.eye(2, device=device).reshape(1, 1, 2, 2).to(dtype=torch.float).repeat(bn, nk, 1, 1)
@@ -355,12 +354,12 @@ def loss_fn(bn, mu, L_inv, mu_t, stddev_t, reconstruct_same_id, image_rec, fold_
     precision_loss = torch.mean(torch.sqrt(torch.sum(precision_sq, dim=[2, 3]) + eps))
 
     # Separation Loss
-    distances = torch.zeros(bn, device=device)
+    distances = torch.zeros(2 * bn, device=device)
     for k in range(nk):
         for k_ in range(nk):
             if k == k_:
                 continue
-            distance = torch.exp(-torch.norm(mu_t_1[:, k] - mu_t_1[:, k_], dim=1) / (2 * sig_sep**2))
+            distance = torch.exp(-torch.norm(mu_t[:, k] - mu_t[:, k_], dim=1) / (2 * sig_sep**2))
             distances += distance
 
     sep_loss = torch.mean(distances)

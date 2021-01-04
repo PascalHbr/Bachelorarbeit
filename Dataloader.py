@@ -200,7 +200,8 @@ class PennAction(Dataset):
         keypoint *= scale
 
         # Sometimes boundaries are outside the image -> skip these images
-        if ((right_bound - left_bound) - (under_bound - upper_bound) != 0) or any(bound < 0 for bound in boundaries):
+        if ((right_bound - left_bound) - (under_bound - upper_bound) != 0) or any(bound < 0 for bound in boundaries) \
+            or right_bound > w or under_bound > h:
             return None, None, False
 
         return keypoint, boundaries, True

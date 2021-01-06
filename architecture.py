@@ -219,16 +219,31 @@ class Transformer(nn.Module):
         super(Transformer, self).__init__()
         self.device = device
         self.L_inv_scale = L_inv_scale
-        self.detr = DETR()
+        self.detr = DETR(device)
+        self.reconstr_dim = 256
         self.map_transform = Conv(n_feature + 1, residual_dim, 3, 1, bn=False, relu=False)  # channels for addition must be increased
+        if self.reconstr_dim == 128:
+            self.preprocess_sigma = nn.Sequential(Conv(3, 64, kernel_size=6, stride=2, bn=True, relu=True),
+                                                  Residual(64, 128),
+                                                  Residual(128, 128),
+                                                  Residual(128, residual_dim)
+                                                  )
+        elif self.reconstr_dim == 256:
+            self.preprocess_sigma = nn.Sequential(Conv(3, 64, kernel_size=6, stride=2, bn=True, relu=True),
+                                                  Residual(64, 128),
+                                                  nn.MaxPool2d(2, 2),
+                                                  Residual(128, 128),
+                                                  Residual(128, residual_dim)
+                                                  )
 
     def forward(self, x):
-        second, mu, L_inv = self.detr(x)
+        x_stack = self.preprocess_sigma(x)
+        mu, L_inv = self.detr(x_stack)
         heat_map = get_heat_map(mu, L_inv, self.device)
         norm = torch.sum(heat_map, 1, keepdim=True) + 1
         heat_map = heat_map / norm
         map_transformed = self.map_transform(heat_map)
-        stack = second + map_transformed
+        stack = x_stack + map_transformed
 
         return mu, L_inv, heat_map, heat_map, stack
 

@@ -185,6 +185,8 @@ class ViT(nn.Module):
 
         x = rearrange(img, 'b c (h p1) (w p2) -> b (h w) (p1 p2 c)', p1 = p, p2 = p)
         x = self.patch_to_embedding(x)
+        print(x.shape)
+        print(self.pos_embedding.shape)
         b, n, c = x.shape
 
         x += self.pos_embedding[:, :n]
@@ -202,7 +204,7 @@ class ViT(nn.Module):
 if __name__ == '__main__':
     VT = ViT(
         image_size=64,
-        patch_size=4,
+        patch_size=8,
         dim=256,
         depth=8,
         heads=8,
@@ -215,4 +217,3 @@ if __name__ == '__main__':
 
     img = torch.randn(8, 256, 64, 64)
     out = VT(img)
-    print(out.shape)

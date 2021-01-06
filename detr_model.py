@@ -10,6 +10,7 @@ from torchvision.models._utils import IntermediateLayerGetter
 from typing import Dict, List
 from utils_DETR import NestedTensor, nested_tensor_from_tensor_list
 import copy
+from einops import rearrange
 
 
 class PositionEmbeddingSine(nn.Module):
@@ -173,7 +174,7 @@ class Joiner(nn.Sequential):
 
 class Transformer(nn.Module):
 
-    def __init__(self, d_model=512, nhead=8, num_encoder_layers=6,
+    def __init__(self, device, d_model=512, nhead=8, num_encoder_layers=6,
                  num_decoder_layers=6, dim_feedforward=2048, dropout=0.1,
                  activation="relu", normalize_before=False,
                  return_intermediate_dec=False):
@@ -194,26 +195,31 @@ class Transformer(nn.Module):
 
         self.d_model = d_model
         self.nhead = nhead
+        self.patch_to_embedding = nn.Linear(16384, 256)
+        self.pos_embedding = nn.Parameter(torch.randn(1, 64, 256))
+        self.device = device
 
     def _reset_parameters(self):
         for p in self.parameters():
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
 
-    def forward(self, src, mask, query_embed, pos_embed):
+    def forward(self, src, query_embed):
         # flatten NxCxHxW to HWxNxC
         bs, c, h, w = src.shape
-        src = src.flatten(2).permute(2, 0, 1)
-        pos_embed = pos_embed.flatten(2).permute(2, 0, 1)
+        src = rearrange(src, 'b c (h p1) (w p2) -> b (h w) (p1 p2 c)', p1=8, p2=8).permute(1, 0, 2)
+        src = self.patch_to_embedding(src)
+        # src = src.flatten(2).permute(2, 0, 1)
+        # pos_embed = pos_embed.flatten(2).permute(2, 0, 1)
+        pos_embed = self.pos_embedding.permute(1, 0, 2)
         query_embed = query_embed.unsqueeze(1).repeat(1, bs, 1)
 
-        mask = mask.flatten(1)
-
+        mask = torch.zeros((bs, 64), dtype=bool).to(self.device)
         tgt = torch.zeros_like(query_embed)
         memory = self.encoder(src, src_key_padding_mask=mask, pos=pos_embed)
         hs = self.decoder(tgt, memory, memory_key_padding_mask=mask,
                           pos=pos_embed, query_pos=query_embed)
-        return hs.transpose(1, 2), memory.permute(1, 2, 0).view(bs, c, h, w)
+        return hs.transpose(1, 2), memory.permute(1, 2, 0)
 
 
 class TransformerEncoder(nn.Module):
@@ -441,8 +447,9 @@ def build_backbone():
     return model
 
 
-def build_transformer():
+def build_transformer(device):
     return Transformer(
+        device=device,
         d_model=256,
         dropout=0.1,
         nhead=8,
@@ -493,28 +500,24 @@ class MLP(nn.Module):
 
 
 class DETR(nn.Module):
-    def __init__(self, num_queries=17):
+    def __init__(self, device, num_queries=17):
         super().__init__()
         self.num_queries = num_queries
-        self.backbone = build_backbone()
-        self.transformer = build_transformer()
+        self.transformer = build_transformer(device)
         self.query_embed = nn.Embedding(18, 256)
-        self.input_proj = nn.Conv2d(2048, 256, kernel_size=1)
         self.to_mu = MLP(256, 256, 6, 3)
 
     def forward(self, x):
         bn, c, h, w = x.shape
-        if isinstance(x, (list, torch.Tensor)):
-            samples = nested_tensor_from_tensor_list(x)
-        features, pos = self.backbone(samples)
-        second, _ = features[0].decompose()
-        src, mask = features[-1].decompose()
-        hs = self.transformer(self.input_proj(src), mask, self.query_embed.weight, pos[-1])[0][-1]
+        hs = self.transformer(x, self.query_embed.weight)[0][-1]
         out = self.to_mu(hs)
         mu, L_inv = 2 * out[:, :, :2].reshape(bn, 18, 2).sigmoid() - 1, out[:, :, 2:].reshape(bn, 18, 2, 2)
 
-        return second, mu, L_inv
+        return mu, L_inv
 
-samples = torch.randn(1, 3, 256, 256)
-detr = DETR()
-second, mu, L_inv = detr(samples)
+if __name__ == "__main__":
+    samples = torch.randn(1, 256, 64, 64)
+    detr = DETR()
+    mu, L_inv = detr(samples)
+    print(mu.shape)
+    print(L_inv.shape)

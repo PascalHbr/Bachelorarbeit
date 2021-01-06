@@ -95,7 +95,9 @@ class Model(nn.Module):
         mu_original, L_inv_original, original_part_maps_raw, original_part_maps_norm, original_sum_part_maps = self.E_sigma(x)
 
         if self.mode == 'predict':
-            original_part_maps_raw, original_part_maps_norm, original_sum_part_maps = self.E_sigma(x)
+            # original_part_maps_raw, original_part_maps_norm, original_sum_part_maps = self.E_sigma(x)
+            mu_original, L_inv_original, original_part_maps_raw, original_part_maps_norm, original_sum_part_maps = self.E_sigma(
+                x)
             return original_part_maps_raw, mu_original[:, :-1], image_rec, part_maps_raw, part_maps_raw, reconstruct_same_id
 
         elif self.mode == 'train':

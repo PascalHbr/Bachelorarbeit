@@ -112,7 +112,7 @@ def get_mu_and_prec(part_maps, device, L_inv_scal):
     row_1 = torch.cat((c.unsqueeze(-1), z.unsqueeze(-1)), dim=-1).unsqueeze(-2)
     row_2 = torch.cat((-b.unsqueeze(-1), a.unsqueeze(-1)), dim=-1).unsqueeze(-2)
     L_inv = L_inv_scal / (det + eps) * torch.cat((row_1, row_2), dim=-2)  # L^⁻1 = 1/(ac)* [[c, 0], [-b, a]
-    L_inv = torch.clamp(L_inv, min=-10000., max=10000.)
+    # L_inv = torch.clamp(L_inv, min=-10000., max=10000.)
 
     return mu, L_inv
 

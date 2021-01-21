@@ -17,7 +17,7 @@ def parse_args():
     parser.add_argument('--reconstr_dim', default=256, type=int, help="dimension of reconstruction")
 
     # modes
-    parser.add_argument('--batch_size', default=10, type=int,  help="batchsize if not slim and 2 * batchsize if slim")
+    parser.add_argument('--batch_size', default=12, type=int,  help="batchsize if not slim and 2 * batchsize if slim")
     parser.add_argument('--n_parts', default=17, type=int, help="number of parts")
     parser.add_argument('--n_features', default=128, type=int,  help="neurons of feature map layer")
     parser.add_argument('--n_c', default=3, type=int)
@@ -33,7 +33,7 @@ def parse_args():
     parser.add_argument('--L_mu', default=5., type=float, help="")
     parser.add_argument('--L_cov', default=0.1, type=float, help="")
     parser.add_argument('--L_rec', default=1.0, type=float, help="")
-    parser.add_argument('--L_sep', default=0., type=float, help="")
+    parser.add_argument('--L_sep', default=0.5, type=float, help="")
     parser.add_argument('--sig_sep', default=0.05, type=float, help="")
     parser.add_argument('--sig_decr', default=1., type=float, help="")
 
@@ -57,7 +57,7 @@ def parse_args():
     parser.add_argument('--static', default=True)
 
     # transformer parameters
-    parser.add_argument('--t_patch_size', default=8, type=int, help="size of image patches")
+    parser.add_argument('--t_patch_size', default=4, type=int, help="size of image patches")
     parser.add_argument('--t_dim', default=256, type=int, help="dimension of patch embedding")
     parser.add_argument('--t_depth', default=4, type=int, help="number of transformer blocks")
     parser.add_argument('--t_heads', default=24, type=int, help="number of attention heads")

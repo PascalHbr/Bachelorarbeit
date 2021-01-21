@@ -69,10 +69,11 @@ class Human36MDataset(Dataset):
 
 
 class PennAction(Dataset):
-    def __init__(self, size, pose_req=None):
+    def __init__(self, size, pose_req=None, action_req=None):
         super(PennAction, self).__init__()
         self.size = size
         self.pose_req = pose_req
+        self.action_req = action_req
         self.sequencepath = "/export/scratch/compvis/datasets/Penn_Action/frames/"
         self.labelpath = "/export/scratch/compvis/datasets/Penn_Action/labels/"
         sequences = natsorted(glob(os.path.join(self.sequencepath, "*")))
@@ -80,10 +81,19 @@ class PennAction(Dataset):
         poses = [[pose for pose in scipy.io.loadmat(annotations[i])['pose'] if annotations[i]] for i in
                  range(len(annotations))]
         poses = [pose for seq in poses for pose in seq]
+        actions = [[action for action in scipy.io.loadmat(annotations[i])['action'] if annotations[i]] for i in
+                 range(len(annotations))]
+        actions = [action for seq in actions for action in seq]
 
         # Choose relevant poses
         if self.pose_req is not None:
-            self.indices = [i for i in range(len(poses)) if poses[i] == self.pose_req]
+            self.indices = [i for i in range(len(poses)) if poses[i] in self.pose_req]
+            sequences = [sequences[i] for i in self.indices]
+            annotations = [annotations[i] for i in self.indices]
+
+        # Choose relevant actions
+        if self.action_req is not None:
+            self.indices = [i for i in range(len(actions)) if actions[i] in self.action_req]
             sequences = [sequences[i] for i in self.indices]
             annotations = [annotations[i] for i in self.indices]
 
@@ -210,10 +220,13 @@ class PennAction(Dataset):
         # Select Image
         image = cv2.imread(self.images[index])
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+
+        # Blur
+        # filterSize = 5
+        # image = cv2.medianBlur(image, filterSize)
+
         left_bound, right_bound, upper_bound, under_bound = self.boundaries[index]
         image = image[upper_bound:under_bound, left_bound:right_bound, :]
-        if image.shape[0] != image.shape[1]:
-            print("SHIT")
         image = cv2.resize(image, (self.size, self.size))
         keypoint = self.keypoints[index]
 

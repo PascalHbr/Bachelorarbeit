@@ -12,6 +12,7 @@ import cv2
 from natsort import natsorted
 import h5py
 import scipy.io
+import wandb
 
 
 def count_parameters(model):
@@ -139,6 +140,42 @@ def make_visualization(original, original_part_maps, labels, reconstruction, sha
 
     return img
 
+
+def visualize_VAE(org, rotation, reconstruction, mu, heat_map, labels, show_labels=True):
+    heat_map_overlay = torch.sum(heat_map, dim=1).cpu().detach().numpy()
+
+    # Mark Keypoints
+    original, mu = org.permute(0, 2, 3, 1).cpu().detach().numpy(), mu.cpu().detach().numpy()
+    img = np.ascontiguousarray(original)
+    mu_scale = (mu + 1.) / 2. * img.shape[1]
+    labels = labels[:, 0].cpu().detach().numpy()
+    n_parts = mu.shape[1]
+    n_labels = labels.shape[1]
+    for i, image in enumerate(img):
+        for k in range(n_parts):
+            cv2.drawMarker(image, (int(mu_scale[i][k][1]), int(mu_scale[i][k][0])), (1., 0, 0),
+                           markerType=cv2.MARKER_CROSS, markerSize=15, thickness=1, line_type=cv2.LINE_AA)
+
+        if show_labels:
+            for n in range(n_labels):
+                cv2.drawMarker(image, (int(labels[i][n][1]), int(labels[i][n][0])), (0, 1., 0),
+                               markerType=cv2.MARKER_CROSS, markerSize=15, thickness=1, line_type=cv2.LINE_AA)
+
+    fig_head, axs_head = plt.subplots(4, 4, figsize=(12, 12))
+    fig_head.suptitle("Overview", fontsize="x-large")
+    for i in range(4):
+        axs_head[i, 0].imshow(org[i].permute(1, 2, 0).cpu().detach().numpy())
+        axs_head[i, 1].imshow(heat_map_overlay[i], cmap='gray')
+        axs_head[i, 2].imshow(img[i])
+        axs_head[i, 3].imshow(reconstruction[i].permute(1, 2, 0).cpu().detach().numpy())
+
+    fig_head.canvas.draw()
+    w, h = fig_head.canvas.get_width_height()
+    img = np.fromstring(fig_head.canvas.tostring_rgb(), dtype=np.uint8, sep='').reshape((w, h, 3))
+
+    plt.close('all')
+
+    return img
 
 def visualize_keypoints(img, fmap, labels, L_inv_scale, device, show_labels):
     bn, nk, h, w = fmap.shape

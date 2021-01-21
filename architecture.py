@@ -6,7 +6,8 @@ from LambdaNetworks import LambdaBottleneck
 import torch.nn.functional as F
 import numpy as np
 from ops import get_heat_map, get_mu_and_prec
-from detr_model import DETR
+from detr_model import DETR, ResNet
+from ResViT import ViTResNet, BasicBlock
 
 
 def softmax(logit_map):
@@ -104,11 +105,9 @@ class Hourglass(nn.Module):
 
 
 class E(nn.Module):
-    def __init__(self, depth, n_feature, residual_dim, p_dropout, device, L_inv_scale, sigma=True, reconstr_dim=256):
+    def __init__(self, depth, n_feature, residual_dim, p_dropout, sigma=True, reconstr_dim=256):
         super(E, self).__init__()
         self.sigma = sigma
-        self.device = device
-        self.L_inv_scale = L_inv_scale
         self.dropout = nn.Dropout(p_dropout)
         self.reconstr_dim = reconstr_dim
         self.hg = Hourglass(depth, residual_dim)  # depth 4 has bottleneck of 4x4
@@ -117,7 +116,6 @@ class E(nn.Module):
             self.feature = Conv(residual_dim, n_feature + 1, kernel_size=3, stride=1, bn=False, relu=False)
         else:
             self.feature = Conv(residual_dim, n_feature, kernel_size=3, stride=1, bn=False, relu=False)
-        self.bn = nn.BatchNorm2d(residual_dim)
         # Preprocessing
         if self.sigma:
             if self.reconstr_dim == 128:
@@ -147,14 +145,6 @@ class E(nn.Module):
             map_normalized = softmax(feature_map)
             map_transformed = self.map_transform(map_normalized)
             stack = map_transformed + x
-
-            # mu, L_inv = get_mu_and_prec(map_normalized, self.device, self.L_inv_scale)
-            # heat_map = get_heat_map(mu, L_inv, self.device)
-            # norm = torch.sum(heat_map, 1, keepdim=True) + 1
-            # heat_map = heat_map / norm
-            #
-            # map_transformed = self.map_transform(heat_map)
-
             return feature_map, map_normalized, stack
         else:
             return feature_map
@@ -212,40 +202,6 @@ class E_transformer(nn.Module):
             return feature_map, map_normalized, stack
         else:
             return feature_map
-
-
-class Transformer(nn.Module):
-    def __init__(self, n_feature, residual_dim, device, L_inv_scale):
-        super(Transformer, self).__init__()
-        self.device = device
-        self.L_inv_scale = L_inv_scale
-        self.detr = DETR(device)
-        self.reconstr_dim = 256
-        self.map_transform = Conv(n_feature + 1, residual_dim, 3, 1, bn=False, relu=False)  # channels for addition must be increased
-        if self.reconstr_dim == 128:
-            self.preprocess_sigma = nn.Sequential(Conv(3, 64, kernel_size=6, stride=2, bn=True, relu=True),
-                                                  Residual(64, 128),
-                                                  Residual(128, 128),
-                                                  Residual(128, residual_dim)
-                                                  )
-        elif self.reconstr_dim == 256:
-            self.preprocess_sigma = nn.Sequential(Conv(3, 64, kernel_size=6, stride=2, bn=True, relu=True),
-                                                  Residual(64, 128),
-                                                  nn.MaxPool2d(2, 2),
-                                                  Residual(128, 128),
-                                                  Residual(128, residual_dim)
-                                                  )
-
-    def forward(self, x):
-        x_stack = self.preprocess_sigma(x)
-        mu, L_inv = self.detr(x_stack)
-        heat_map = get_heat_map(mu, L_inv, self.device)
-        norm = torch.sum(heat_map, 1, keepdim=True) + 1
-        heat_map = heat_map / norm
-        map_transformed = self.map_transform(heat_map)
-        stack = x_stack + map_transformed
-
-        return mu, L_inv, heat_map, heat_map, stack
 
 
 class Nccuc(nn.Module):

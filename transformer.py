@@ -184,18 +184,19 @@ class ViT(nn.Module):
         p = self.patch_size
 
         x = rearrange(img, 'b c (h p1) (w p2) -> b (h w) (p1 p2 c)', p1 = p, p2 = p)
-        x = self.patch_to_embedding(x)
         print(x.shape)
-        print(self.pos_embedding.shape)
+        x = self.patch_to_embedding(x)
         b, n, c = x.shape
 
         x += self.pos_embedding[:, :n]
         x = self.dropout(x)
-        x = self.transformer(x, mask).permute(0, 2, 1).reshape(b, c, self.map_size, self.map_size)
+        x = self.transformer(x, mask)
+        print(x.shape)
+        x = x.permute(0, 2, 1).reshape(b, c, self.map_size, self.map_size)
 
         x = self.up_Conv1(x)
         x = self.up_Conv2(x)
-        x = self.up_Conv3(x)
+        #
 
         x = self.to_partmap(x)
 
@@ -204,7 +205,7 @@ class ViT(nn.Module):
 if __name__ == '__main__':
     VT = ViT(
         image_size=64,
-        patch_size=8,
+        patch_size=4,
         dim=256,
         depth=8,
         heads=8,
@@ -217,3 +218,4 @@ if __name__ == '__main__':
 
     img = torch.randn(8, 256, 64, 64)
     out = VT(img)
+    print(out.shape)

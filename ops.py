@@ -1,15 +1,13 @@
 import torch
 import torch.nn.functional as F
+from torchvision import models
+import torchvision.transforms as T
 import kornia.augmentation as K
 from opt_einsum import contract
 import torch.nn as nn
 import numpy as np
-
-
-def softmax(logit_map):
-    bn, kn, h, w = logit_map.shape
-    map_norm = nn.Softmax(dim=2)(logit_map.reshape(bn, kn, -1)).reshape(bn, kn, h, w)
-    return map_norm
+from PIL import Image
+import matplotlib.pyplot as plt
 
 
 def AbsDetJacobian(batch_meshgrid, device):
@@ -112,13 +110,13 @@ def get_mu_and_prec(part_maps, device, L_inv_scal):
     row_1 = torch.cat((c.unsqueeze(-1), z.unsqueeze(-1)), dim=-1).unsqueeze(-2)
     row_2 = torch.cat((-b.unsqueeze(-1), a.unsqueeze(-1)), dim=-1).unsqueeze(-2)
     L_inv = L_inv_scal / (det + eps) * torch.cat((row_1, row_2), dim=-2)  # L^⁻1 = 1/(ac)* [[c, 0], [-b, a]
-    # L_inv = torch.clamp(L_inv, min=-10000., max=10000.)
+    L_inv = torch.clamp(L_inv, min=-1000., max=1000.)
 
     return mu, L_inv
 
 
-def get_heat_map(mu, L_inv, device):
-    h, w, bn, nk = 64, 64, L_inv.shape[0], L_inv.shape[1]
+def get_heat_map(mu, L_inv, device, h=64):
+    h, w, bn, nk = h, h, L_inv.shape[0], L_inv.shape[1]
 
     y_t = torch.linspace(-1., 1., h, device=device).reshape(h, 1).repeat(1, w)
     x_t = torch.linspace(-1., 1., w, device=device).reshape(1, w).repeat(h, 1)
@@ -134,9 +132,9 @@ def get_heat_map(mu, L_inv, device):
     heat = 1 / (1 + proj_precision)
     heat = heat.reshape(bn, nk, h, w)  # bn number parts width height
 
-    # Background
-    eps = 1e-12
-    heat[:, -1] = 1 / (heat[:, -1] + eps)
+    # # Background
+    # eps = 1e-12
+    # heat[:, -1] = 1 / (heat[:, -1] + eps)
 
     return heat
 
@@ -147,9 +145,9 @@ def precision_dist_op(precision, dist, part_depth, nk, h, w):
     heat = 1 / (1 + proj_precision)
     heat = heat.reshape(-1, nk, h, w)  # bn number parts width height
 
-    # Background
-    eps = 1e-12
-    heat[:, -1] = 1 / (heat[:, -1] + eps)
+    # # Background
+    # eps = 1e-12
+    # heat[:, -1] = 1 / (heat[:, -1] + eps)
 
     part_heat = heat[:, :part_depth]
 
@@ -355,8 +353,8 @@ def loss_fn(bn, mu, L_inv, mu_t, stddev_t, reconstruct_same_id, image_rec, fold_
 
     # Separation Loss
     distances = torch.zeros(2 * bn, device=device)
-    for k in range(nk):
-        for k_ in range(nk):
+    for k in range(nk-1):
+        for k_ in range(nk-1):
             if k == k_:
                 continue
             distance = torch.exp(-torch.norm(mu_t[:, k] - mu_t[:, k_], dim=1) / (2 * sig_sep**2))
@@ -375,7 +373,106 @@ def loss_fn(bn, mu, L_inv, mu_t, stddev_t, reconstruct_same_id, image_rec, fold_
         fold_img_squared, heat_mask_l2 = fold_img_with_mu(distance_metric, mu[:, :-1].detach(), l_2_scal, l_2_threshold, device)
 
     rec_loss = torch.mean(torch.sum(fold_img_squared, dim=[2, 3]))
-    # rec_loss = nn.L1Loss()(image_rec, reconstruct_same_id)
+
 
     total_loss = L_rec * rec_loss + L_mu * transform_loss + L_cov * precision_loss + L_sep * sep_loss
+
     return total_loss, rec_loss, transform_loss, precision_loss
+
+
+def rgb_to_grayscale(image: torch.Tensor) -> torch.Tensor:
+    r"""Convert a RGB image to grayscale version of image.
+
+    The image data is assumed to be in the range of (0, 1).
+
+    Args:
+        image (torch.Tensor): RGB image to be converted to grayscale with shape :math:`(*,3,H,W)`.
+
+    Returns:
+        torch.Tensor: grayscale version of the image with shape :math:`(*,1,H,W)`.
+
+    Example:
+        >>> input = torch.rand(2, 3, 4, 5)
+        >>> gray = rgb_to_grayscale(input) # 2x1x4x5
+    """
+    if not isinstance(image, torch.Tensor):
+        raise TypeError("Input type is not a torch.Tensor. Got {}".format(
+            type(image)))
+
+    if len(image.shape) < 3 or image.shape[-3] != 3:
+        raise ValueError("Input size must have a shape of (*, 3, H, W). Got {}"
+                         .format(image.shape))
+
+    r: torch.Tensor = image[..., 0:1, :, :]
+    g: torch.Tensor = image[..., 1:2, :, :]
+    b: torch.Tensor = image[..., 2:3, :, :]
+
+    gray: torch.Tensor = 0.299 * r + 0.587 * g + 0.114 * b
+    return gray
+
+
+def decode_segmap(image, nc=21):
+    label_colors = np.array([(0, 0, 0),  # 0=background
+                             # 1=aeroplane, 2=bicycle, 3=bird, 4=boat, 5=bottle
+                             (128, 0, 0), (0, 128, 0), (128, 128, 0), (0, 0, 128), (128, 0, 128),
+                             # 6=bus, 7=car, 8=cat, 9=chair, 10=cow
+                             (0, 128, 128), (128, 128, 128), (64, 0, 0), (192, 0, 0), (64, 128, 0),
+                             # 11=dining table, 12=dog, 13=horse, 14=motorbike, 15=person
+                             (192, 128, 0), (64, 0, 128), (192, 0, 128), (64, 128, 128), (192, 128, 128),
+                             # 16=potted plant, 17=sheep, 18=sofa, 19=train, 20=tv/monitor
+                             (0, 64, 0), (128, 64, 0), (0, 192, 0), (128, 192, 0), (0, 64, 128)])
+
+    r = torch.zeros_like(image)
+    g = torch.zeros_like(image)
+    b = torch.zeros_like(image)
+
+    for l in range(0, nc):
+        idx = image == l
+        r[idx] = label_colors[l, 0]
+        g[idx] = label_colors[l, 1]
+        b[idx] = label_colors[l, 2]
+
+    rgb = torch.stack([r, g, b], dim=1)
+
+    return rgb
+
+
+def get_mask(net, img):
+    # Comment the Resize and CenterCrop for better inference results
+    inp = T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])(img)
+    out = net(inp)['out']
+    om = torch.argmax(out, dim=1).detach()
+    rgb = decode_segmap(om)
+    gray = rgb_to_grayscale(rgb)
+    mask = torch.where(gray != 0., 1., 0.)
+
+    # # Remove small pixels
+    # componentsNumber, labeledImage, componentStats, componentCentroids = \
+    #     cv2.connectedComponentsWithStats(out, connectivity=4)
+    #
+    # # Set the minimum pixels for the area filter:
+    # minArea = 40
+    #
+    # # Get the indices/labels of the remaining components based on the area stat
+    # # (skip the background component at index 0)
+    # remainingComponentLabels = [i for i in range(1, componentsNumber) if componentStats[i][4] >= minArea]
+    # filteredImage = np.where(np.isin(labeledImage, remainingComponentLabels) == True, 255, 0).astype("uint8")
+
+    return mask
+
+
+if __name__ == "__main__":
+    img = Image.open('img.png').convert('RGB')
+    plt.imshow(img)
+    plt.show()
+    trf = T.Compose([T.Resize(256),
+                     T.ToTensor(),
+                     ])
+    img_t = trf(img).unsqueeze(0)
+    dlab = models.segmentation.deeplabv3_resnet101(pretrained=1).eval()
+    mask = get_mask(dlab, img_t)
+    img = plt.imread('img.png')[:, :, :3]
+    segmented = torch.tensor(img).unsqueeze(0).permute(0, 3, 1, 2) * mask[:, :, :254, :259]
+    img_s = segmented[0].detach().cpu().numpy().transpose(1, 2, 0)
+    plt.imshow(img_s)
+    plt.show()

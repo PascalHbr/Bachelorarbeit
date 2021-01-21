@@ -1,7 +1,7 @@
 import torch
 from Dataloader import DataLoader, get_dataset
 from utils import save_model, load_model, make_visualization, keypoint_metric
-from Model import Model
+from Model import Model, Model2
 from config import parse_args, write_hyperparameters
 from dotmap import DotMap
 import os
@@ -12,12 +12,12 @@ from utils import count_parameters
 
 def main(arg):
     # Set random seeds
-    torch.manual_seed(7)
-    torch.cuda.manual_seed(7)
-    np.random.seed(7)
+    torch.manual_seed(42)
+    torch.cuda.manual_seed(42)
+    np.random.seed(42)
     torch.backends.cudnn.deterministic = True
-    torch.manual_seed(7)
-    rng = np.random.RandomState(7)
+    torch.manual_seed(42)
+    rng = np.random.RandomState(42)
 
     # Get args
     bn = arg.batch_size
@@ -33,14 +33,15 @@ def main(arg):
     # Load Datasets and DataLoader
     dataset = get_dataset(arg.dataset)
     if arg.dataset == 'pennaction':
-        init_dataset = dataset(size=arg.reconstr_dim, pose_req="front")
+        init_dataset = dataset(size=arg.reconstr_dim, action_req=["tennis_serve", "tennis_forehand", "baseball_pitch",
+                                                                  "baseball_swing", "jumping_jacks", "golf_swing"])
         splits = [int(len(init_dataset) * 0.8), len(init_dataset) - int(len(init_dataset) * 0.8)]
         train_dataset, test_dataset = torch.utils.data.random_split(init_dataset, splits)
     else:
         train_dataset = dataset(size=arg.reconstr_dim, train=True)
         test_dataset = dataset(size=arg.reconstr_dim, train=False)
     train_loader = DataLoader(train_dataset, batch_size=bn, shuffle=True, num_workers=4)
-    test_loader = DataLoader(test_dataset, batch_size=bn, num_workers=4)
+    test_loader = DataLoader(test_dataset, batch_size=bn, shuffle=True, num_workers=4)
 
     if mode == 'train':
         # Make new directory
@@ -71,13 +72,13 @@ def main(arg):
                 # Train on Train Set
                 model.train()
                 model.mode = 'train'
-                # if epoch < 15:
-                #     model.L_mu += 0.2
-                #     if model.L_sep > 0:
-                #         model.L_sep -= 0.05
                 for step, (original, keypoints) in enumerate(train_loader):
+                    if epoch != 0:
+                        model.L_sep = 0.
                     original, keypoints = original.to(device), keypoints.to(device)
                     image_rec, reconstruct_same_id, loss, rec_loss, transform_loss, precision_loss, mu, L_inv, mu_original = model(original)
+                    print(keypoints.shape)
+                    print(mu.shape)
                     mu_norm = torch.mean(torch.norm(mu, p=1, dim=2)).cpu().detach().numpy()
                     L_inv_norm = torch.mean(torch.linalg.norm(L_inv, ord='fro', dim=[2, 3])).cpu().detach().numpy()
                     # Track Mean and Precision Matrix
@@ -117,8 +118,8 @@ def main(arg):
                     with torch.no_grad():
                         model.mode = 'predict'
                         original, keypoints = original.to(device), keypoints.to(device)
-                        original_part_maps, mu_original, image_rec, part_maps, part_maps, reconstruct_same_id = model(original)
-                        img = make_visualization(original, original_part_maps, keypoints, reconstruct_same_id, image_rec[:original.shape[0]],
+                        original_part_maps, mu_original, image_rec, part_maps, part_maps, reconstruction = model(original)
+                        img = make_visualization(original, original_part_maps, keypoints, reconstruction, image_rec[:original.shape[0]],
                                            image_rec[original.shape[0]:], part_maps[original.shape[0]:], part_maps[:original.shape[0]],
                                            L_inv_scal, model_save_dir + '/summary/', epoch, device, show_labels=False)
                         if epoch % 5 == 0:

@@ -62,7 +62,7 @@ def make_input_tps_param(tps_param, move_point=None, scal_point=None):
     else:
         assert(move_point is None and scal_point is None)
 
-    return coord, t_vector
+    return coord, t_vector, rot_mat
 
 
 def ThinPlateSpline(U, coord, vector, out_size, device, move=None, scal=None):

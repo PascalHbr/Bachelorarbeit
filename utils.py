@@ -189,6 +189,7 @@ def visualize_keypoints(img, fmap, labels, L_inv_scale, device, show_labels):
     heat_map = heat_map / norm
 
     heat_map_overlay = torch.sum(heat_map, dim=1).cpu().detach().numpy()
+    heat_map_overlay = torch.where(heat_map_overlay > 0.2, torch.ones_like(heat_map_overlay), heat_map_overlay)
 
     # Mark Keypoints
     img, mu = img.permute(0, 2, 3, 1).cpu().detach().numpy(), mu.cpu().detach().numpy()
@@ -296,6 +297,50 @@ def crop_and_resize(image, bbox, keypoint, size=256):
 
     return image_crop, keypoint
 
+
+def visualize_SAE(org, img_reconstr, img_augm, img_reconstr_augm, img_rot, img_reconstr_rot, img_rot_augm,
+                  img_reconstr_rot_augm, heat_map_norm_augm, heat_map_norm_rot, mu, labels, show_labels=True):
+    heat_map_overlay = torch.sum(heat_map_norm_augm, dim=1).cpu().detach().numpy()
+    heat_map_overlay_rot = torch.sum(heat_map_norm_rot, dim=1).cpu().detach().numpy()
+
+    # Mark Keypoints
+    original, mu = org.permute(0, 2, 3, 1).cpu().detach().numpy(), mu.cpu().detach().numpy()
+    img = np.ascontiguousarray(original)
+    mu_scale = (mu + 1.) / 2. * img.shape[1]
+    labels = labels[:, 0].cpu().detach().numpy()
+    n_parts = mu.shape[1]
+    n_labels = labels.shape[1]
+    for i, image in enumerate(img):
+        for k in range(n_parts):
+            cv2.drawMarker(image, (int(mu_scale[i][k][1]), int(mu_scale[i][k][0])), (1., 0, 0),
+                           markerType=cv2.MARKER_CROSS, markerSize=15, thickness=1, line_type=cv2.LINE_AA)
+
+        if show_labels:
+            for n in range(n_labels):
+                cv2.drawMarker(image, (int(labels[i][n][1]), int(labels[i][n][0])), (0, 1., 0),
+                               markerType=cv2.MARKER_CROSS, markerSize=15, thickness=1, line_type=cv2.LINE_AA)
+
+    fig_head, axs_head = plt.subplots(4, 10, figsize=(12, 12))
+    fig_head.suptitle("Overview", fontsize="x-large")
+    for i in range(4):
+        axs_head[i, 0].imshow(org[i].permute(1, 2, 0).cpu().detach().numpy())
+        axs_head[i, 1].imshow(img_reconstr[i].permute(1, 2, 0).cpu().detach().numpy())
+        axs_head[i, 2].imshow(img_augm[i].permute(1, 2, 0).cpu().detach().numpy())
+        axs_head[i, 3].imshow(img_reconstr_augm[i].permute(1, 2, 0).cpu().detach().numpy())
+        axs_head[i, 4].imshow(img_rot[i].permute(1, 2, 0).cpu().detach().numpy())
+        axs_head[i, 5].imshow(img_reconstr_rot[i].permute(1, 2, 0).cpu().detach().numpy())
+        axs_head[i, 6].imshow(img_rot_augm[i].permute(1, 2, 0).cpu().detach().numpy())
+        axs_head[i, 7].imshow(img_reconstr_rot_augm[i].permute(1, 2, 0).cpu().detach().numpy())
+        axs_head[i, 8].imshow(heat_map_overlay[i], cmap='gray')
+        axs_head[i, 9].imshow(heat_map_overlay_rot[i], cmap='gray')
+
+    fig_head.canvas.draw()
+    w, h = fig_head.canvas.get_width_height()
+    img = np.fromstring(fig_head.canvas.tostring_rgb(), dtype=np.uint8, sep='').reshape((w, h, 3))
+
+    plt.close('all')
+
+    return img
 
 
 if __name__ == '__main__':

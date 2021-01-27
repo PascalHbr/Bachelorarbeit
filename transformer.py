@@ -36,10 +36,10 @@ class ResidualBlock(nn.Module):
     def __init__(self, in_channels, out_channels, downsample=None):
         super(ResidualBlock, self).__init__()
         self.conv1 = Conv(in_channels, out_channels, kernel_size=3, stride=1, bn=False, relu=False)
-        self.bn1 = nn.BatchNorm2d(out_channels)
+        self.bn1 = nn.InstanceNorm2d(out_channels)
         self.relu = nn.ReLU(inplace=True)
         self.conv2 = Conv(in_channels, out_channels, kernel_size=3, stride=1, bn=False, relu=False)
-        self.bn2 = nn.BatchNorm2d(out_channels)
+        self.bn2 = nn.InstanceNorm2d(out_channels)
         self.downsample = downsample
 
     def forward(self, x):
@@ -155,6 +155,7 @@ class ViT(nn.Module):
         self.dropout = nn.Dropout(emb_dropout)
 
         self.transformer = Transformer(dim, depth, heads, dim_head, mlp_dim, dropout)
+        self.conv = Conv(dim, channels, kernel_size=3, stride=1, relu=True, bn=True)
         self.relu = nn.LeakyReLU()
         self.bn1 = nn.InstanceNorm2d(channels)
         self.bn2 = nn.InstanceNorm2d(channels)
@@ -184,16 +185,15 @@ class ViT(nn.Module):
         p = self.patch_size
 
         x = rearrange(img, 'b c (h p1) (w p2) -> b (h w) (p1 p2 c)', p1 = p, p2 = p)
-        print(x.shape)
         x = self.patch_to_embedding(x)
         b, n, c = x.shape
 
         x += self.pos_embedding[:, :n]
         x = self.dropout(x)
         x = self.transformer(x, mask)
-        print(x.shape)
         x = x.permute(0, 2, 1).reshape(b, c, self.map_size, self.map_size)
 
+        x = self.conv(x)
         x = self.up_Conv1(x)
         x = self.up_Conv2(x)
         #

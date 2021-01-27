@@ -52,16 +52,14 @@ class Model(nn.Module):
 
 
     def forward(self, x):
-        # mask = get_mask(self.dlab, x)
-        # x = mask * x
         batch_size = x.shape[0]
         batch_size2 = 2 * x.shape[0]
         # tps
         image_orig = x.repeat(2, 1, 1, 1)
         tps_param_dic = tps_parameters(batch_size2, self.scal, self.tps_scal, self.rot_scal, self.off_scal,
                                        self.scal_var, self.augm_scal)
-        coord, vector, rot_mat = make_input_tps_param(tps_param_dic)
-        coord, vector, rot_mat = coord.to(self.device), vector.to(self.device), rot_mat.to(self.device)
+        coord, vector = make_input_tps_param(tps_param_dic)
+        coord, vector = coord.to(self.device), vector.to(self.device)
         t_images, t_mesh = ThinPlateSpline(image_orig, coord, vector, self.reconstr_dim, device=self.device)
         image_in, image_rec = prepare_pairs(t_images, self.arg, self.device)
         transform_mesh = F.interpolate(t_mesh, size=64)

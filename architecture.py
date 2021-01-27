@@ -1,8 +1,6 @@
 import torch
 import torch.nn as nn
 from transformer import ViT
-from gsa_pytorch import GSA
-from LambdaNetworks import LambdaBottleneck
 import torch.nn.functional as F
 import numpy as np
 from ops import get_heat_map, get_mu_and_prec

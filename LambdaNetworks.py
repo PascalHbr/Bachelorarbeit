@@ -1,88 +1,60 @@
 import torch
+from gsa_pytorch import GSA
 import torch.nn as nn
-import torch.nn.functional as F
 
 
-class LambdaConv(nn.Module):
-    def __init__(self, in_channels, out_channels, heads=4, k=16, u=1, m=23):
-        super(LambdaConv, self).__init__()
-        self.kk, self.uu, self.vv, self.mm, self.heads = k, u, out_channels // heads, m, heads
-        self.local_context = True if m > 0 else False
-        self.padding = (m - 1) // 2
-
-        self.queries = nn.Sequential(
-            nn.Conv2d(in_channels, k * heads, kernel_size=1, bias=False),
-            nn.BatchNorm2d(k * heads)
-        )
-        self.keys = nn.Sequential(
-            nn.Conv2d(in_channels, k * u, kernel_size=1, bias=False),
-        )
-        self.values = nn.Sequential(
-            nn.Conv2d(in_channels, self.vv * u, kernel_size=1, bias=False),
-            nn.BatchNorm2d(self.vv * u)
-        )
-
-        self.softmax = nn.Softmax(dim=-1)
-
-        if self.local_context:
-            self.embedding = nn.Parameter(torch.randn([self.kk, self.uu, 1, m, m]), requires_grad=True)
-        else:
-            self.embedding = nn.Parameter(torch.randn([self.kk, self.uu]), requires_grad=True)
+class Conv(nn.Module):
+    def __init__(self, inp_dim, out_dim, kernel_size=3, stride=1, bn=True, relu=True):
+        super(Conv, self).__init__()
+        self.kernel_size = kernel_size
+        self.inp_dim = inp_dim
+        self.conv = nn.Conv2d(inp_dim, out_dim, kernel_size, stride, padding=(kernel_size - 1) // 2, bias=True)
+        self.relu = None
+        self.bn = None
+        if relu:
+            self.relu = nn.LeakyReLU()
+        if bn:
+            self.bn = nn.InstanceNorm2d(out_dim)
 
     def forward(self, x):
-        n_batch, C, w, h = x.size()
+        x = self.conv(x)
+        if self.bn is not None:
+            x = self.bn(x)
+        if self.relu is not None:
+            x = self.relu(x)
+        return x
 
-        queries = self.queries(x).view(n_batch, self.heads, self.kk, w * h) # b, heads, k // heads, w * h
-        softmax = self.softmax(self.keys(x).view(n_batch, self.kk, self.uu, w * h)) # b, k, uu, w * h
-        values = self.values(x).view(n_batch, self.vv, self.uu, w * h) # b, v, uu, w * h
-
-        lambda_c = torch.einsum('bkum,bvum->bkv', softmax, values)
-        y_c = torch.einsum('bhkn,bkv->bhvn', queries, lambda_c)
-
-        if self.local_context:
-            values = values.view(n_batch, self.uu, -1, w, h)
-            lambda_p = F.conv3d(values, self.embedding, padding=(0, self.padding, self.padding))
-            lambda_p = lambda_p.view(n_batch, self.kk, self.vv, w * h)
-            y_p = torch.einsum('bhkn,bkvn->bhvn', queries, lambda_p)
-        else:
-            lambda_p = torch.einsum('ku,bvun->bkvn', self.embedding, values)
-            y_p = torch.einsum('bhkn,bkvn->bhvn', queries, lambda_p)
-
-        out = y_c + y_p
-        out = out.contiguous().view(n_batch, -1, w, h)
-
-        return out
+    def initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_uniform_(m.weight, nonlinearity='leaky_relu')
 
 
-class LambdaBottleneck(nn.Module):
-    expansion = 4
-
-    def __init__(self, in_planes, planes, stride=1):
-        super(LambdaBottleneck, self).__init__()
-        self.conv1 = nn.Conv2d(in_planes, planes, kernel_size=1, bias=False)
-        self.bn1 = nn.BatchNorm2d(planes)
-
-        self.conv2 = nn.ModuleList([LambdaConv(planes, planes)])
-        if stride != 1 or in_planes != self.expansion * planes:
-            self.conv2.append(nn.AvgPool2d(kernel_size=(3, 3), stride=stride, padding=(1, 1)))
-        self.conv2.append(nn.BatchNorm2d(planes))
-        self.conv2.append(nn.ReLU())
-        self.conv2 = nn.Sequential(*self.conv2)
-
-        self.conv3 = nn.Conv2d(planes, self.expansion * planes, kernel_size=1, bias=False)
-        self.bn3 = nn.BatchNorm2d(self.expansion * planes)
-
-        self.shortcut = nn.Sequential()
-        if stride != 1 or in_planes != self.expansion*planes:
-            self.shortcut = nn.Sequential(
-                nn.Conv2d(in_planes, self.expansion*planes, kernel_size=1, stride=stride),
-                nn.BatchNorm2d(self.expansion*planes)
-            )
+class GSA_Transformer(nn.Module):
+    def __init__(self, n_features, dim, dim_out, dim_key, heads, rel_pos_length):
+        super(GSA_Transformer, self).__init__()
+        self.gsa = GSA(
+              dim = dim,
+              dim_out = dim_out,
+              dim_key = dim_key,
+              heads = heads,
+              rel_pos_length = rel_pos_length  # in paper, set to max(height, width). you can also turn this off by omitting this line
+              )
+        self.to_features = Conv(dim_out, n_features, 3, 1, relu=False, bn=False)
 
     def forward(self, x):
-        out = F.relu(self.bn1(self.conv1(x)))
-        out = self.conv2(out)
-        out = self.bn3(self.conv3(out))
-        out += self.shortcut(x)
-        out = F.relu(out)
-        return out
+        x = self.gsa(x)
+        x = self.to_features(x)
+        return x
+
+if __name__ == "__main__":
+    gsa = GSA_Transformer(
+              dim = 256,
+              dim_out = 256,
+              dim_key = 32,
+              heads = 8,
+              rel_pos_length = 64  # in paper, set to max(height, width). you can also turn this off by omitting this line
+              )
+    x = torch.randn(1, 256, 64, 64)
+    out = gsa(x)
+    print(out.shape)

@@ -115,7 +115,7 @@ def get_mu_and_prec(part_maps, device, L_inv_scal):
     return mu, L_inv
 
 
-def get_heat_map(mu, L_inv, device, h=64):
+def get_heat_map(mu, L_inv, device, background, h=64):
     h, w, bn, nk = h, h, L_inv.shape[0], L_inv.shape[1]
 
     y_t = torch.linspace(-1., 1., h, device=device).reshape(h, 1).repeat(1, w)
@@ -132,22 +132,24 @@ def get_heat_map(mu, L_inv, device, h=64):
     heat = 1 / (1 + proj_precision)
     heat = heat.reshape(bn, nk, h, w)  # bn number parts width height
 
-    # # Background
-    # eps = 1e-12
-    # heat[:, -1] = 1 / (heat[:, -1] + eps)
+    # Background
+    if background:
+        eps = 1e-12
+        heat[:, -1] = 1 / (heat[:, -1] + eps)
 
     return heat
 
 
-def precision_dist_op(precision, dist, part_depth, nk, h, w):
+def precision_dist_op(precision, dist, part_depth, nk, h, w, background):
     proj_precision = contract('bnik, bnkf -> bnif', precision, dist) ** 2  # tf.matmul(precision, dist)**2
     proj_precision = torch.sum(proj_precision, -2)  # sum x and y axis
     heat = 1 / (1 + proj_precision)
     heat = heat.reshape(-1, nk, h, w)  # bn number parts width height
 
-    # # Background
-    # eps = 1e-12
-    # heat[:, -1] = 1 / (heat[:, -1] + eps)
+    # Background
+    if background:
+        eps = 1e-12
+        heat[:, -1] = 1 / (heat[:, -1] + eps)
 
     part_heat = heat[:, :part_depth]
 
@@ -170,8 +172,8 @@ def reverse_batch(tensor, n_reverse):
     return tensor_rev
 
 
-def feat_mu_to_enc(features, mu, L_inv, device, covariance, reconstr_dim, static=True, n_reverse=5, feat_shape=True,
-                   heat_feat_normalize=True, range=10):
+def feat_mu_to_enc(features, mu, L_inv, device, covariance, reconstr_dim, background,
+                   static=True, n_reverse=5, feat_shape=True, heat_feat_normalize=True, range=10):
     """
     :param features: tensor shape   bn, nk, nf
     :param mu: tensor shape  [bn, nk, 2] in range[-1,1]
@@ -213,10 +215,10 @@ def feat_mu_to_enc(features, mu, L_inv, device, covariance, reconstr_dim, static
         dist = mesh - mu.unsqueeze(-1) + eps
 
         if not covariance or not feat_shape:
-            heat_circ, part_heat_circ = precision_dist_op(circular_precision, dist, part_depth, nk, h, w)
+            heat_circ, part_heat_circ = precision_dist_op(circular_precision, dist, part_depth, nk, h, w, background)
 
         if covariance or feat_shape:
-            heat_shape, part_heat_shape = precision_dist_op(L_inv, dist, part_depth, nk, h, w)
+            heat_shape, part_heat_shape = precision_dist_op(L_inv, dist, part_depth, nk, h, w, background)
 
         nkf = feat_slice[1] - feat_slice[0]
 
@@ -339,9 +341,11 @@ def fold_img_with_L_inv(img, mu, L_inv, scale, threshold, device, normalize=True
 
 
 def loss_fn(bn, mu, L_inv, mu_t, stddev_t, reconstruct_same_id, image_rec, fold_with_shape, l_2_scal, l_2_threshold,
-            L_mu, L_cov, L_rec, L_sep, sig_sep, device):
+            L_mu, L_cov, L_rec, L_sep, sig_sep, background, device):
 
     # Equiv Loss
+    if background:
+        mu, mu_t, stddev_t, L_inv = mu[:, :-1], mu_t[:, :-1], stddev_t[:, :-1], L_inv[:, :-1]
     mu_t_1, mu_t_2 = mu_t[:bn], mu_t[bn:]
     bn, nk, _ = mu_t_1.shape
     stddev_t_1, stddev_t_2 = stddev_t[:bn], stddev_t[bn:]
@@ -367,10 +371,10 @@ def loss_fn(bn, mu, L_inv, mu_t, stddev_t, reconstruct_same_id, image_rec, fold_
     distance_metric = torch.abs(img_difference)
 
     if fold_with_shape:
-        fold_img_squared = fold_img_with_L_inv(distance_metric, mu[:, :-1].detach(), L_inv[:, :-1].detach(),
+        fold_img_squared = fold_img_with_L_inv(distance_metric, mu.detach(), L_inv.detach(),
                                                l_2_scal, l_2_threshold, device)
     else:
-        fold_img_squared, heat_mask_l2 = fold_img_with_mu(distance_metric, mu[:, :-1].detach(), l_2_scal, l_2_threshold, device)
+        fold_img_squared, heat_mask_l2 = fold_img_with_mu(distance_metric, mu.detach(), l_2_scal, l_2_threshold, device)
 
     rec_loss = torch.mean(torch.sum(fold_img_squared, dim=[2, 3]))
 

@@ -1,8 +1,9 @@
 import torch
 import torch.nn as nn
-from ops import get_heat_map, augm, feat_mu_to_enc, fold_img_with_L_inv
+from ops import get_heat_map, augm, feat_mu_to_enc, fold_img_with_L_inv, AbsDetJacobian, loss_fn, get_mu_and_prec
 from transformations import tps_parameters, make_input_tps_param, ThinPlateSpline
 import torch.nn.functional as F
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 from Dataloader import DataLoader, get_dataset
 from utils import save_model, load_model, keypoint_metric, visualize_SAE, count_parameters
 from config import parse_args, write_hyperparameters
@@ -11,6 +12,9 @@ import os
 import numpy as np
 import wandb
 from architecture import Decoder as Decoder_old
+from transformer import ViT
+from LambdaNetworks import GSA_Transformer
+
 
 def coordinate_transformation(coords, grid, device, grid_size=1000):
     bn, k, _ = coords.shape
@@ -61,6 +65,7 @@ def softmax(logit_map):
 class Conv(nn.Module):
     def __init__(self, inp_dim, out_dim, kernel_size=3, stride=1, bn=True, relu=True):
         super(Conv, self).__init__()
+        self.kernel_size = kernel_size
         self.inp_dim = inp_dim
         self.conv = nn.Conv2d(inp_dim, out_dim, kernel_size, stride, padding=(kernel_size - 1) // 2, bias=True)
         self.relu = None
@@ -68,9 +73,7 @@ class Conv(nn.Module):
         if relu:
             self.relu = nn.LeakyReLU()
         if bn:
-            self.bn = nn.BatchNorm2d(out_dim)
-
-        # self.initialize_weights()
+            self.bn = nn.InstanceNorm2d(out_dim)
 
     def forward(self, x):
         x = self.conv(x)
@@ -90,11 +93,11 @@ class Residual(nn.Module):
     def __init__(self, inp_dim, out_dim):
         super(Residual, self).__init__()
         self.relu = nn.LeakyReLU()
-        self.bn1 = nn.BatchNorm2d(inp_dim)
+        self.bn1 = nn.InstanceNorm2d(inp_dim)
         self.conv1 = Conv(inp_dim, int(out_dim / 2), 1, bn=False, relu=False)
-        self.bn2 = nn.BatchNorm2d(int(out_dim / 2))
+        self.bn2 = nn.InstanceNorm2d(int(out_dim / 2))
         self.conv2 = Conv(int(out_dim / 2), int(out_dim / 2), 3, bn=False, relu=False)
-        self.bn3 = nn.BatchNorm2d(int(out_dim / 2))
+        self.bn3 = nn.InstanceNorm2d(int(out_dim / 2))
         self.conv3 = Conv(int(out_dim / 2), out_dim, 1, bn=False, relu=False)
         self.skip_layer = Conv(inp_dim, out_dim, 1, bn=False, relu=False)
         if inp_dim == out_dim:
@@ -169,44 +172,73 @@ class PreProcessor(nn.Module):
 
 
 class Encoder(nn.Module):
-    def __init__(self, n_parts, n_features, residual_dim, reconstr_dim, depth_s, depth_a, device, p_dropout=0.2, c=16, dim=64):
+    def __init__(self, n_parts, n_features, residual_dim, reconstr_dim, depth_s, depth_a, background, device,
+                 p_dropout, t_patch_size, t_dim, t_depth, t_heads, t_mlp_dim, c=16, dim=64):
         super(Encoder, self).__init__()
         self.preprocessor = PreProcessor(residual_dim, reconstr_dim)
-        self.k = n_parts
+        self.k = n_parts + 1 if background else n_parts
         self.dim = dim
-        self.dropout = nn.Dropout(p_dropout)
-        self.tanh = nn.Tanh()
+        self.bn = nn.BatchNorm2d(2 * self.k)
         self.sigmoid = nn.Sigmoid()
-        self.relu = nn.LeakyReLU()
-        self.bn1 = nn.BatchNorm2d(c * self.k)
-        self.bn2 = nn.BatchNorm2d(2 * n_parts)
-        self.bn3 = nn.BatchNorm2d(4 * n_parts)
-        self.hg_shape = Hourglass(depth_s, residual_dim)
-        self.out = Conv(residual_dim, residual_dim, kernel_size=3, stride=1, bn=True, relu=True)
-        self.to_parts = Conv(residual_dim, self.k, kernel_size=3, stride=1, bn=False, relu=False)
         self.map_transform = Conv(self.k, residual_dim, 3, 1, bn=False, relu=False)
-        self.prec = nn.Conv2d(in_channels=self.k, out_channels=2 * self.k, kernel_size=dim, groups=self.k)
-        # self.to_channels = Conv(residual_dim, c * n_parts, kernel_size=3, stride=1, bn=False, relu=False)
-        # self.mu = nn.Conv2d(in_channels=c * n_parts, out_channels=2 * n_parts, kernel_size=dim, groups=n_parts)
-        # self.prec = nn.Conv2d(in_channels=c * n_parts, out_channels=2 * n_parts, kernel_size=dim, groups=n_parts)
-        # self.to_channels = Conv(residual_dim, self.k, kernel_size=3, stride=1, bn=True, relu=True)
-        # self.mu = nn.Linear(self.k * 64 * 64, self.k * 2)
-        # self.prec = nn.Linear(self.k * 64 * 64, self.k * 4)
 
-        self.hg_appearance = Hourglass(depth_a, residual_dim)
-        # self.to_residual = Conv(self.k, residual_dim, kernel_size=1, stride=1, bn=False, relu=False)
-        self.to_features = Conv(residual_dim, n_features, kernel_size=1, stride=1, bn=False, relu=False)
+        self.prec = nn.Conv2d(in_channels=self.k, out_channels=2 * self.k, kernel_size=dim, groups=self.k)
+
+        self.background = background
         self.device = device
+
+        # Hourglass Shape
+        # self.hg_shape = Hourglass(depth_s, residual_dim)
+        # self.dropout = nn.Dropout(p_dropout)
+        # self.out = Conv(residual_dim, residual_dim, kernel_size=3, stride=1, bn=True, relu=True)
+        # self.to_parts = Conv(residual_dim, self.k, kernel_size=3, stride=1, bn=False, relu=False)
+
+        # Hourglass Appearance
+        # self.hg_appearance = Hourglass(depth_a, residual_dim)
+        # self.to_features = Conv(residual_dim, n_features, kernel_size=1, stride=1, bn=False, relu=False)
+
+        # Transformer Shape
+        self.conv1 = Conv(residual_dim, residual_dim, kernel_size=3, stride=1, bn=True, relu=True)
+        self.vit_shape = ViT(
+                       image_size=64,
+                       patch_size=t_patch_size,
+                       dim=t_dim,
+                       depth=t_depth,
+                       heads=t_heads,
+                       mlp_dim=t_mlp_dim,
+                       dropout=0.1,
+                       channels=256,
+                       emb_dropout=0.1,
+                       nk=self.k
+                       )
+
+        self.vit_appearance = ViT(
+            image_size=64,
+            patch_size=t_patch_size,
+            dim=t_dim,
+            depth=t_depth,
+            heads=t_heads,
+            mlp_dim=t_mlp_dim,
+            dropout=0.1,
+            channels=256,
+            emb_dropout=0.1,
+            nk=n_features
+        )
 
     def forward(self, img):
         bn = img.shape[0]
         img_preprocessed = self.preprocessor(img)
 
         # Get Shape Representation
-        img_shape = self.hg_shape(img_preprocessed)
-        img_shape = self.dropout(img_shape)
-        img_shape = self.out(img_shape)
-        feature_map = self.to_parts(img_shape)
+        # img_shape = self.hg_shape(img_preprocessed)
+        # img_shape = self.dropout(img_shape)
+        # img_shape = self.out(img_shape)
+        # feature_map = self.to_parts(img_shape)
+
+        # Transformer
+        img_shape = self.conv1(img_preprocessed)
+        feature_map = self.vit_shape(img_shape)
+
         map_normalized = softmax(feature_map)
         mu = get_mu(map_normalized, self.device)
 
@@ -214,82 +246,77 @@ class Encoder(nn.Module):
         map_transformed = self.map_transform(map_normalized)
         stack = map_transformed + img_preprocessed
 
-
-        # img_c = self.to_channels(img_shape)
-        # img_c = self.relu(self.bn1(img_c))
-        # mu = self.mu(img_c)
-        # mu = mu.reshape(bn, self.k, 2)
-
+        # Predict precision matrix
         prec = self.prec(feature_map)
-        prec = self.sigmoid(prec).reshape(bn, self.k, 2)
-        rot, scal = 3.141 * prec[:, :, 0].reshape(-1), 20 * prec[:, :, 1].reshape(-1)
+        prec = self.sigmoid(self.bn(prec)).reshape(bn, self.k, 2)
+        rot, scal = 2 * 3.141 * prec[:, :, 0].reshape(-1), 20 * prec[:, :, 1].reshape(-1)
         scal_matrix = torch.cat([torch.tensor([[scal[i], 0.], [0., 0.]], device=self.device).unsqueeze(0) for i in range(scal.shape[0])], 0).reshape(bn, self.k, 2, 2)
         rot_mat = torch.cat([rotation_mat(rot[i].reshape(-1)).unsqueeze(0) for i in range(rot.shape[0])], 0).reshape(bn, self.k, 2, 2)
         prec = torch.tensor([[30., 0.], [0., 30.]], device=self.device).unsqueeze(0).unsqueeze(0).repeat(bn, self.k, 1, 1) - \
                scal_matrix
         prec = rot_mat @ prec @ rot_mat.transpose(2, 3)
+        if self.background:
+            eps = 1e-6
+            prec[:, -1] = torch.tensor([[0.01, eps], [eps, 0.01]], device=self.device)
 
-        heat_map = get_heat_map(mu, prec, device=self.device, h=self.dim)
+        # Make Heatmap
+        heat_map = get_heat_map(mu, prec, self.device, self.background, self.dim)
         norm = torch.sum(heat_map, 1, keepdim=True) + 1
         heat_map_norm = heat_map / norm
 
         # Get Appearance Representation
-        # heat_map_norm_res = self.to_residual(heat_map_norm)
-        # img_stack = img_preprocessed + heat_map_norm_res
-        img_app = self.hg_appearance(stack)
+        # img_app = self.hg_appearance(stack)
+        # raw_features = self.to_features(img_app)
 
-        raw_features = self.to_features(img_app)
+        # Transformer
+        raw_features = self.vit_appearance(stack)
+
         part_appearances = torch.einsum('bfij, bkij -> bkf', raw_features, heat_map_norm)
 
         return mu, prec, map_normalized, heat_map_norm, part_appearances
 
 
 class Decoder(nn.Module):
-    def __init__(self, n_features, residual_dim, reconstr_dim, depth_s, device, nk, covariance):
+    def __init__(self, n_features, residual_dim, reconstr_dim, depth_s, device, nk, covariance, background):
         super(Decoder, self).__init__()
-        self.decoder_old = Decoder_old(nk, n_features, reconstr_dim)
+        self.k = nk + 1 if background else nk
+        self.decoder_old = Decoder_old(self.k, n_features, reconstr_dim)
         self.device = device
         self.reconstr_dim = reconstr_dim
         self.covariance = covariance
-        # self.decoder = Hourglass(depth_s, residual_dim)
-        # self.to_residual = Residual(n_features, residual_dim)
-        # self.relu = nn.LeakyReLU()
-        # self.bn1 = nn.BatchNorm2d(residual_dim // 2)
-        # self.bn2 = nn.BatchNorm2d(residual_dim // 4)
-        # self.up_Conv1 = nn.Sequential(nn.ConvTranspose2d(in_channels=residual_dim, out_channels=residual_dim // 2,
-        #                                                  kernel_size=4, stride=2, padding=1),
-        #                               self.bn1,
-        #                               self.relu)
-        # self.up_Conv2 = nn.Sequential(nn.ConvTranspose2d(in_channels=residual_dim // 2, out_channels=residual_dim // 4,
-        #                                                  kernel_size=4, stride=2, padding=1),
-        #                               self.bn2,
-        #                               self.relu)
-        #
-        # if reconstr_dim == 128:
-        #     self.to_rgb = Conv(residual_dim // 2, 3, kernel_size=5, stride=1, bn=False, relu=False)
-        # else:
-        #     self.to_rgb = Conv(residual_dim // 4, 3, kernel_size=5, stride=1, bn=False, relu=False)
-        # self.sigmoid = nn.Sigmoid()
+        self.background = background
 
     def forward(self, heat_map_norm, part_appearances, mu, prec):
-        encoding = feat_mu_to_enc(part_appearances, mu, prec, self.device, self.covariance, self.reconstr_dim)
+        encoding = feat_mu_to_enc(part_appearances, mu, prec, self.device, self.covariance, self.reconstr_dim, self.background)
         reconstruction = self.decoder_old(encoding)
-        # heat_feat_map = torch.einsum('bkij,bkn -> bnij', heat_map_norm, part_appearances)
-        # heat_feat_map = self.to_residual(heat_feat_map)
-        # out = self.decoder(heat_feat_map)
-        # heat_map_overlay = torch.sum(heat_map_norm, dim=1).unsqueeze(1)
-        # heat_map_mask = torch.where(heat_map_overlay > 0.2, torch.ones_like(heat_map_overlay), heat_map_overlay)
-        # out_masked = out * heat_map_mask
-        #
-        # up1 = self.up_Conv1(out_masked)
-        # if self.reconstr_dim == 256:
-        #     up2 = self.up_Conv2(up1)
-        #     reconstruction = self.to_rgb(up2)
-        # else:
-        #     reconstruction = self.to_rgb(up1)
-        # reconstruction = self.sigmoid(reconstruction)
 
         return reconstruction
+
+
+def make_pairs(img_original, arg):
+    bn, c, h, w = img_original.shape
+    # Make image and grid
+    tps_param_dic = tps_parameters(bn, arg.scal, 0., 0., 0., 0., arg.augm_scal)
+    coord, vector = make_input_tps_param(tps_param_dic)
+    coord, vector = coord.to(arg.device), vector.to(arg.device)
+    img, mesh = ThinPlateSpline(img_original, coord, vector, arg.reconstr_dim, device=arg.device)
+    # Make transformed image and grid
+    tps_param_dic_rot = tps_parameters(bn, arg.scal, arg.tps_scal, arg.rot_scal,
+                                       arg.off_scal, arg.scal_var, arg.augm_scal)
+    coord_rot, vector_rot = make_input_tps_param(tps_param_dic_rot)
+    coord_rot, vector_rot = coord_rot.to(arg.device), vector_rot.to(arg.device)
+    img_rot, mesh_rot = ThinPlateSpline(img_original, coord_rot, vector_rot, arg.reconstr_dim, device=arg.device)
+    # Make augmentation
+    img_stack = torch.cat([img, img_rot], dim=0)
+    img_stack_augm = augm(img_stack, arg, arg.device)
+    img_augm, img_rot_augm = img_stack_augm[:bn], img_stack_augm[bn:]
+
+    # Make input stack
+    input_images = F.interpolate(torch.cat([img_augm, img_rot], dim=0), size=arg.reconstr_dim).clamp(min=0., max=1.)
+    reconstr_images = F.interpolate(torch.cat([img, img_rot_augm], dim=0), size=arg.reconstr_dim).clamp(min=0., max=1.)
+    mesh_stack = torch.cat([mesh, mesh_rot], dim=0)
+
+    return input_images, reconstr_images, mesh_stack
 
 
 class SAE(nn.Module):
@@ -304,69 +331,57 @@ class SAE(nn.Module):
         self.off_scal = arg.off_scal
         self.scal_var = arg.scal_var
         self.augm_scal = arg.augm_scal
+        self.fold_with_shape = arg.fold_with_shape
+        self.background = arg.background
+        self.l_2_scal = arg.l_2_scal
+        self.l_2_threshold = arg.l_2_threshold
         self.L_mu = arg.L_mu
         self.L_rec = arg.L_rec
         self.L_cov = arg.L_cov
         self.L_conc = arg.L_conc
+        self.L_sep = arg.L_sep
+        self.sig_sep = arg.sig_sep
         self.device = arg.device
         self.encoder = Encoder(arg.n_parts, arg.n_features, arg.residual_dim, arg.reconstr_dim, arg.depth_s,
-                               arg.depth_a, self.device, p_dropout=arg.p_dropout)
+                               arg.depth_a, self.background, self.device, arg.p_dropout,
+                               arg.t_patch_size, arg.t_dim, arg.t_depth, arg.t_heads, arg.t_mlp_dim)
         self.decoder = Decoder(arg.n_features, arg.residual_dim, arg.reconstr_dim, arg.depth_s, self.device, self.k,
-                               arg.covariance)
+                               arg.covariance, self.background)
 
     def forward(self, img):
+        bn = img.shape[0]
         # Make Transformation
-        batch_size = img.shape[0]
-        tps_param_dic = tps_parameters(batch_size, self.scal, self.tps_scal, self.rot_scal, self.off_scal,
-                                       self.scal_var, self.augm_scal)
-        coord, vector, rot_mat = make_input_tps_param(tps_param_dic)
-        coord, vector, rot_mat = coord.to(self.device), vector.to(self.device), rot_mat.to(self.device)
-        rot_mat = rot_mat.unsqueeze(1).repeat(1, self.k, 1, 1)
-        img_rot, mesh_rot = ThinPlateSpline(img, coord, vector, self.reconstr_dim, device=self.device)
-        img_stack = torch.cat([img, img_rot])
-        img_stack_augm = augm(img_stack, self.arg, self.device)
-        img_augm, img_rot_augm = img_stack_augm[:batch_size], img_stack_augm[batch_size:]
+        input_images, ground_truth_images, mesh_stack = make_pairs(img, self.arg)
+        transform_mesh = F.interpolate(mesh_stack, size=64)
+        volume_mesh = AbsDetJacobian(transform_mesh, self.device)
 
         # Send through encoder
-        mu_augm, prec_augm, part_map_augm, heat_map_norm_augm, part_appearances_augm = self.encoder(img_augm)
-        mu_rot, prec_rot, part_map_rot, heat_map_norm_rot, part_appearances_rot = self.encoder(img_rot)
+        mu, prec, part_map_norm, heat_map_norm, part_appearances = self.encoder(input_images)
+
+        # Swap part appearances
+        part_appearances_swap = torch.cat([part_appearances[bn:], part_appearances[:bn]], dim=0)
 
         # Send through decoder
-        img_reconstr = self.decoder(heat_map_norm_augm, part_appearances_rot, mu_augm, prec_augm)
-        # # img_reconstr_augm = self.decoder(heat_map_norm_augm, part_appearances_augm)
-        # # img_reconstr_rot = self.decoder(heat_map_norm_rot, part_appearances_rot)
-        img_reconstr_rot_augm = self.decoder(heat_map_norm_rot, part_appearances_augm, mu_rot, prec_rot)
+        img_reconstr = self.decoder(heat_map_norm, part_appearances_swap, mu, prec)
 
         # Calculate Loss
-        # mu_augm_rot = (mu_augm.unsqueeze(2) @ rot_mat).squeeze(2)
-        # prec_augm_rot = rot_mat @ prec_augm @ rot_mat.transpose(2, 3)
-        #
-        # out_loss = torch.mean(torch.max(torch.abs(mu_augm) - 1., torch.zeros_like(mu_augm)) +
-        #                       torch.max(torch.abs(mu_rot) - 1., torch.zeros_like(mu_rot)))
-        # mu_loss = torch.mean((mu_augm_rot - mu_rot) ** 2)
-        # prec_loss = torch.tensor([1.], device=self.device) - torch.mean(F.cosine_similarity(torch.flatten(prec_augm_rot, 2),
-        #                                                                 torch.flatten(prec_rot, 2), dim=2))
-        # conc_loss = 1 / torch.mean(torch.linalg.norm(prec_augm, ord='fro', dim=[2, 3]) + \
-        #                            torch.linalg.norm(prec_rot, ord='fro', dim=[2, 3]))
+        integrant = (part_map_norm.unsqueeze(-1) * volume_mesh.unsqueeze(-1)).squeeze()
+        integrant = integrant / torch.sum(integrant, dim=[2, 3], keepdim=True)
+        mu_t = torch.einsum('akij, alij -> akl', integrant, transform_mesh)
+        transform_mesh_out_prod = torch.einsum('amij, anij -> amnij', transform_mesh, transform_mesh)
+        mu_out_prod = torch.einsum('akm, akn -> akmn', mu_t, mu_t)
+        stddev_t = torch.einsum('akij, amnij -> akmn', integrant, transform_mesh_out_prod) - mu_out_prod
 
-        # Reconstruction loss
-        rec_loss1 = nn.MSELoss()(img_reconstr, img)
-        rec_loss4 = nn.MSELoss()(img_reconstr_rot_augm, img_rot_augm)
-        rec_loss = rec_loss1 + rec_loss4
-        # img_stack = torch.cat([img, img_rot_augm], dim=0)
-        # rec_stack = torch.cat([img_reconstr, img_reconstr_rot_augm])
-        # mu_stack = torch.cat([mu_augm, mu_rot])
-        # prec_stack = torch.cat([prec_augm, prec_rot])
-        # distance_metric = torch.abs(img_stack - rec_stack)
-        # fold_img_squared = fold_img_with_L_inv(distance_metric, mu_stack.detach(), prec_stack.detach(),
-        #                                        0.8, 0.2, self.device)
-        # rec_loss = torch.mean(torch.sum(fold_img_squared, dim=[2, 3]))
-
-        total_loss = self.L_mu * mu_loss + self.L_rec * rec_loss + self.L_cov * prec_loss + \
-                     0 * conc_loss + 0 * out_loss
-
-        return img, img_reconstr, img_reconstr, img_augm, img_reconstr, img_augm, img_rot_augm, \
-               img_reconstr_rot_augm, heat_map_norm_augm, heat_map_norm_rot, mu_augm, prec_augm, total_loss
+        total_loss, rec_loss, transform_loss, precision_loss = loss_fn(bn, mu, prec, mu_t, stddev_t,
+                                                                       img_reconstr, ground_truth_images,
+                                                                       self.fold_with_shape,
+                                                                       self.l_2_scal, self.l_2_threshold, self.L_mu,
+                                                                       self.L_cov,
+                                                                       self.L_rec, self.L_sep, self.sig_sep,
+                                                                       self.background, self.device)
+        if self.background:
+            mu, prec = mu[:, :-1], prec[:, :-1]
+        return ground_truth_images, img_reconstr, mu, prec, part_map_norm, heat_map_norm, total_loss
 
 
 def main(arg):
@@ -418,7 +433,8 @@ def main(arg):
         print(f'Number of Parameters: {count_parameters(model)}')
 
         # Definde Optimizer
-        optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=arg.weight_decay)
+        optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=1e-5)
+        # scheduler = ReduceLROnPlateau(optimizer, factor=0.2, threshold=1e-3, patience=3)
 
         # Log with wandb
         wandb.init(project='Disentanglement', config=arg, name=arg.name)
@@ -427,16 +443,18 @@ def main(arg):
         # Make Training
         with torch.autograd.set_detect_anomaly(False):
             for epoch in range(epochs+1):
+
                 # Train on Train Set
                 model.train()
                 model.mode = 'train'
                 for step, (original, keypoints) in enumerate(train_loader):
+                    bn = original.shape[0]
                     original, keypoints = original.to(device), keypoints.to(device)
-                    img, img_reconstr, img_augm, img_reconstr_augm, img_rot, img_reconstr_rot, img_rot_augm, \
-                    img_reconstr_rot_augm, heat_map_norm_augm, heat_map_norm_rot, mu, prec, total_loss = model(original)
-                    mu_norm = torch.mean(torch.norm(mu, p=1, dim=2)).cpu().detach().numpy()
-                    L_inv_norm = torch.mean(torch.linalg.norm(prec, ord='fro', dim=[2, 3])).cpu().detach().numpy()
+                    # Forward Pass
+                    ground_truth_images, img_reconstr, mu, prec, part_map_norm, heat_map_norm, total_loss = model(original)
                     # Track Mean and Precision Matrix
+                    mu_norm = torch.mean(torch.norm(mu[:bn], p=1, dim=2)).cpu().detach().numpy()
+                    L_inv_norm = torch.mean(torch.linalg.norm(prec[:bn], ord='fro', dim=[2, 3])).cpu().detach().numpy()
                     wandb.log({"Part Means": mu_norm})
                     wandb.log({"Precision Matrix": L_inv_norm})
                     # Zero out gradients
@@ -447,7 +465,7 @@ def main(arg):
                     # Track Loss
                     wandb.log({"Training Loss": total_loss.cpu()})
                     # Track Metric
-                    score = keypoint_metric(mu, keypoints)
+                    score = keypoint_metric(mu[:bn], keypoints)
                     wandb.log({"Metric Train": score})
 
                 # Evaluate on Test Set
@@ -456,16 +474,17 @@ def main(arg):
                 val_loss = torch.zeros(1)
                 for step, (original, keypoints) in enumerate(test_loader):
                     with torch.no_grad():
+                        bn = original.shape[0]
                         original, keypoints = original.to(device), keypoints.to(device)
-                        img, img_reconstr, img_augm, img_reconstr_augm, img_rot, img_reconstr_rot, img_rot_augm, \
-                        img_reconstr_rot_augm, heat_map_norm_augm, heat_map_norm_rot, mu, prec, total_loss = model(original)
+                        ground_truth_images, img_reconstr, mu, prec, part_map_norm, heat_map_norm, total_loss= model(original)
                         # Track Loss and Metric
-                        score = keypoint_metric(mu, keypoints)
+                        score = keypoint_metric(mu[:bn], keypoints)
                         val_score += score.cpu()
                         val_loss += total_loss.cpu()
 
                 val_loss = val_loss / (step + 1)
                 val_score = val_score / (step + 1)
+                # scheduler.step()
                 wandb.log({"Evaluation Loss": val_loss})
                 wandb.log({"Metric Validation": val_score})
 
@@ -474,11 +493,10 @@ def main(arg):
                     with torch.no_grad():
                         model.mode = 'predict'
                         original, keypoints = original.to(device), keypoints.to(device)
-                        img, img_reconstr, img_augm, img_reconstr_augm, img_rot, img_reconstr_rot, img_rot_augm, \
-                        img_reconstr_rot_augm, heat_map_norm_augm, heat_map_norm_rot, mu, prec, total_loss = model(original)
+                        ground_truth_images, img_reconstr, mu, prec, part_map_norm, heat_map_norm, total_loss = model(original)
 
-                        img = visualize_SAE(img, img_reconstr, img_augm, img_reconstr_augm, img_rot, img_reconstr_rot, img_rot_augm,
-                                            img_reconstr_rot_augm, heat_map_norm_augm, heat_map_norm_rot, mu, keypoints)
+                        img = visualize_SAE(ground_truth_images, img_reconstr, mu, prec, part_map_norm, heat_map_norm,
+                                            keypoints, model_save_dir + '/summary/', epoch)
                         wandb.log({"Summary_" + str(epoch): [wandb.Image(img)]})
                         save_model(model, model_save_dir)
 

@@ -1,4 +1,5 @@
 from torchvision import transforms
+import torch
 from torch.utils.data import Dataset, DataLoader
 from natsort import natsorted
 import os
@@ -7,10 +8,12 @@ import cv2
 import pandas as pd
 import numpy as np
 import scipy.io
+import json
+import h5py
 
 
 class DeepFashionDataset(Dataset):
-    def __init__(self, size, train=True):
+    def __init__(self, size, train=True, mix=False):
         super(DeepFashionDataset, self).__init__()
         self.size = size
         self.train = train
@@ -24,6 +27,7 @@ class DeepFashionDataset(Dataset):
         self.img_path = pd.read_csv(os.path.join(self.csv_path + subdir_name + ".csv"))['filename'].tolist()
         self.keypoints = np.flip(np.array(pd.read_json(os.path.join(self.annotations + subdir_name + ".json"))['keypoints'].tolist()), 2).copy()
         self.transforms = transforms.Compose([transforms.ToTensor()])
+        self.mix = mix
 
     def __len__(self):
         return len(self.keypoints)
@@ -39,37 +43,149 @@ class DeepFashionDataset(Dataset):
         keypoint = self.keypoints[index]
         keypoint = self.transforms(keypoint)
 
+        # make additional keypoints
+        if self.mix:
+            extra_kp = 0.5 * self.size * torch.ones([1, 15, 2])
+            keypoint = torch.cat([keypoint, extra_kp], dim=1)
+
         return image, keypoint
 
 
 class Human36MDataset(Dataset):
-    def __init__(self, size, train=True):
+    def __init__(self, size, mix=False):
         super(Human36MDataset, self).__init__()
         self.size = size
-        self.train = train
-        self.basepath = "/export/scratch/compvis/datasets/human3M_lorenz19"
-        if self.train:
-            subdir_name = "train"
-        else:
-            subdir_name = "test"
-        self.datafiles = natsorted(glob(os.path.join(self.basepath, subdir_name, "*", "*", "*.jpg")))
+        self.img_shape = [1002, 1000, 3]
+        self.base_path = "/export/scratch/compvis/datasets/human3.6M/"
+        self.annot_path = "/export/home/phuber/BA/annot_small.json" if mix == False else "/export/home/phuber/BA/annot_very_small.json"
+        with open(self.annot_path, "r") as json_file:
+            f = json.load(json_file)
+            self.images = [path for path in list(f['frame_path'])]
+            self.keypoints = [np.flip(np.array(keypoint)).copy() for keypoint in list(f['keypoints'])]
+            self.bboxes = [self.make_bbox(keypoint) for keypoint in self.keypoints]
+
         self.transforms = transforms.Compose([transforms.ToTensor()])
+        self.mix = mix
+
+    def make_bbox(self, keypoints):
+        # bbox should have shape [left, up, right, low]
+        h, w, c = self.img_shape
+        padd = 30
+
+        key_y = keypoints[:, 0]
+        key_x = keypoints[:, 1]
+        up = np.min(key_y).astype(int)
+        up -= min(padd, up)
+        low = np.max(key_y).astype(int)
+        low += min(padd, h)
+        left = np.min(key_x).astype(int)
+        left -= min(padd, left)
+        right = np.max(key_x).astype(int)
+        right += min(padd, w)
+
+        bbox = [left, up, right, low]
+        return bbox
+
+    def transform_keypoints(self, bbox, keypoint):
+        h, w, c = self.img_shape
+        h_, w_ = int(bbox[3]) - int(bbox[1]), int(bbox[2]) - int(bbox[0])
+        long_side = max(h_, w_)
+        # Don't use too small images
+        if long_side < 50:
+            return None, None, False
+
+        # Don't just use bounding box but also a little bit more (else heads are cut off in TPS)
+        padd_add = 30
+        if long_side == h_:
+            padd_long = min(h - h_, padd_add)
+            if padd_long % 2 != 0:
+                padd_long += 1
+            padd_up = min(int(bbox[1]), padd_long / 2)
+            padd_down = min(h - int(bbox[3]), padd_long - padd_up)
+            if padd_up + padd_down < padd_long:
+                padd_up += padd_long - (padd_up + padd_down)
+            bbox[1] -= padd_up
+            bbox[3] += padd_down
+            h_, w_ = int(bbox[3]) - int(bbox[1]), int(bbox[2]) - int(bbox[0])
+            long_side = max(h_, w_)
+        else:
+            padd_long = min(w - w_, padd_add)
+            if padd_long % 2 != 0:
+                padd_long += 1
+            padd_left = min(int(bbox[0]), padd_long / 2)
+            padd_right = min(h - int(bbox[2]), padd_long - padd_left)
+            if padd_left + padd_right < padd_long:
+                padd_left += padd_long - (padd_left + padd_right)
+            bbox[0] -= padd_left
+            bbox[2] += padd_right
+            h_, w_ = int(bbox[3]) - int(bbox[1]), int(bbox[2]) - int(bbox[0])
+            long_side = max(h_, w_)
+
+        # Padd the sides to make it quadratic
+        diff = max(h_, w_) - min(h_, w_)
+        if diff % 2 != 0:
+            diff += 1
+        padding = diff / 2
+        if long_side == h_:
+            left_padding = min(padding, int(bbox[0]))
+            right_padding = min(long_side - left_padding - w_, w - int(bbox[2]))
+            if left_padding + w_ + right_padding < long_side:
+                left_padding += long_side - (left_padding + w_ + right_padding)
+            upper_padding = 0
+            under_padding = 0
+        else:
+            upper_padding = min(padding, int(bbox[1]))
+            under_padding = min(long_side - upper_padding - h_, h - int(bbox[3]))
+            if upper_padding + h_ + under_padding < long_side:
+                upper_padding += long_side - (upper_padding + h_ + under_padding)
+            left_padding = 0
+            right_padding = 0
+
+        # Adjust boundaries
+        left_bound = int(bbox[0]) - int(left_padding)
+        right_bound = int(bbox[2]) + int(right_padding)
+        upper_bound = int(bbox[1]) - int(upper_padding)
+        under_bound = int(bbox[3]) + int(under_padding)
+        boundaries = [left_bound, right_bound, upper_bound, under_bound]
+
+        # Adjust keypoints
+        keypoint[:, 1] -= left_bound
+        keypoint[:, 0] -= upper_bound
+        scale = self.size / long_side
+        keypoint *= scale
+
+        # Sometimes boundaries are outside the image -> skip these images
+        if ((right_bound - left_bound) - (under_bound - upper_bound) != 0) or any(bound < 0 for bound in boundaries) \
+                or right_bound > w or under_bound > h:
+            return None, None, False
+
+        return keypoint, boundaries, True
+
 
     def __len__(self):
-        return len(self.datafiles)
+        return len(self.images)
 
     def __getitem__(self, index):
         # Select Image
-        image = cv2.imread(self.datafiles[index])
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        image = cv2.resize(image, (self.size, self.size))
-        image = self.transforms(image)
+        image = cv2.imread(self.base_path + self.images[index])
 
-        return image, image
+        # Transform Image (crop and resize) and Keypoints
+        init_bbox = self.bboxes[index]
+        init_keypoints = self.keypoints[index]
+        keypoint, bbox, _ = self.transform_keypoints(init_bbox, init_keypoints)
+        left_bound, right_bound, upper_bound, under_bound = bbox
+        image = image[upper_bound:under_bound, left_bound:right_bound, :]
+        image = cv2.resize(image, (self.size, self.size))
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+
+        image = self.transforms(image)
+        keypoint = self.transforms(keypoint)
+
+        return image, keypoint
 
 
 class PennAction(Dataset):
-    def __init__(self, size, pose_req=None, action_req=None):
+    def __init__(self, size, pose_req=None, action_req=None, mix=False):
         super(PennAction, self).__init__()
         self.size = size
         self.pose_req = pose_req
@@ -137,6 +253,7 @@ class PennAction(Dataset):
         self.boundaries = boundaries_valid
 
         self.transforms = transforms.Compose([transforms.ToTensor()])
+        self.mix = mix
 
     def __len__(self):
         return len(self.images)
@@ -233,13 +350,19 @@ class PennAction(Dataset):
         image = self.transforms(image)
         keypoint = self.transforms(keypoint)
 
+        if self.mix:
+            extra_kp = 0.5 * self.size * torch.ones([1, 19, 2])
+            keypoint = torch.cat([keypoint, extra_kp], dim=1)
+
         return image, keypoint
 
 
 __datasets__ = {'deepfashion': DeepFashionDataset,
-                'human36m': Human36MDataset,
+                'human36': Human36MDataset,
                 'pennaction': PennAction}
 
 
 def get_dataset(dataset_name):
     return __datasets__[dataset_name]
+
+

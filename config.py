@@ -5,7 +5,7 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--name', default="trial1", type=str, help="name of the experiment", required=True)
     parser.add_argument('--gpu', type=int, default=None, required=True)
-    parser.add_argument('--dataset', default='deepfashion', help="name of the dataset")
+    parser.add_argument('--dataset', default='human36', help="name of the dataset")
 
     # run setting
     parser.add_argument('--mode', default='train', choices=['train', 'predict'])
@@ -18,7 +18,7 @@ def parse_args():
     parser.add_argument('--background', default=False, type=bool)
 
     # modes
-    parser.add_argument('--batch_size', default=10, type=int,  help="batchsize if not slim and 2 * batchsize if slim")
+    parser.add_argument('--batch_size', default=8, type=int,  help="batchsize if not slim and 2 * batchsize if slim")
     parser.add_argument('--n_parts', default=17, type=int, help="number of parts")
     parser.add_argument('--n_features', default=128, type=int,  help="neurons of feature map layer")
     parser.add_argument('--n_c', default=3, type=int)
@@ -27,11 +27,11 @@ def parse_args():
     parser.add_argument('--depth_a', default=1, type=int, help="depth of appearance hourglass")
 
     # loss multiplication constants
-    parser.add_argument('--lr',  default=1e-3, type=float, help="learning rate of network")
+    parser.add_argument('--lr',  default=1e-4, type=float, help="learning rate of network")
     parser.add_argument('--clip', default=5., type=float, help="")
     parser.add_argument('--p_dropout', default=0.2, type=float, help="dropout rate")
-    parser.add_argument('--weight_decay', default=1e-4, type=float, help="weight_decay")
-    parser.add_argument('--L_mu', default=5.0, type=float, help="")
+    parser.add_argument('--weight_decay', default=1e-5, type=float, help="weight_decay")
+    parser.add_argument('--L_mu', default=1.0, type=float, help="")
     parser.add_argument('--L_cov', default=0.1, type=float, help="")
     parser.add_argument('--L_rec', default=1.0, type=float, help="")
     parser.add_argument('--L_sep', default=0., type=float, help="")

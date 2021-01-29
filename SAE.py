@@ -14,6 +14,7 @@ import wandb
 from architecture import Decoder as Decoder_old
 from transformer import ViT
 from LambdaNetworks import GSA_Transformer
+from torch.utils.data import ConcatDataset, random_split
 
 
 def coordinate_transformation(coords, grid, device, grid_size=1000):
@@ -263,6 +264,8 @@ class Encoder(nn.Module):
         heat_map = get_heat_map(mu, prec, self.device, self.background, self.dim)
         norm = torch.sum(heat_map, 1, keepdim=True) + 1
         heat_map_norm = heat_map / norm
+        if self.background:
+            heat_map_norm[:, -1] = 1 / heat_map_norm[:, -1]
 
         # Get Appearance Representation
         # img_app = self.hg_appearance(stack)
@@ -280,15 +283,55 @@ class Decoder(nn.Module):
     def __init__(self, n_features, residual_dim, reconstr_dim, depth_s, device, nk, covariance, background):
         super(Decoder, self).__init__()
         self.k = nk + 1 if background else nk
-        self.decoder_old = Decoder_old(self.k, n_features, reconstr_dim)
         self.device = device
         self.reconstr_dim = reconstr_dim
         self.covariance = covariance
         self.background = background
+        self.decoder_old = Decoder_old(self.k, n_features, reconstr_dim)
+
+        # self.vit_decoder = ViT(
+        #     image_size=64,
+        #     patch_size=4,
+        #     dim=256,
+        #     depth=8,
+        #     heads=8,
+        #     mlp_dim=1024,
+        #     dropout=0.1,
+        #     channels=n_features,
+        #     emb_dropout=0.1,
+        #     nk=256
+        # )
+        # self.relu = nn.ReLU()
+        # self.bn1 = nn.InstanceNorm2d(128)
+        # self.bn2 = nn.InstanceNorm2d(64)
+        # self.up_Conv1 = nn.Sequential(
+        #                               nn.ConvTranspose2d(in_channels=256, out_channels=128, kernel_size=4,
+        #                                                  stride=2, padding=1),
+        #                               self.bn1,
+        #                               self.relu)
+        #
+        # self.up_Conv2 = nn.Sequential(
+        #                               nn.ConvTranspose2d(in_channels=128, out_channels=64, kernel_size=4,
+        #                                                  stride=2, padding=1),
+        #                               self.bn2,
+        #                               self.relu)
+        # if self.reconstr_dim == 256:
+        #     self.to_rgb = Conv(64, 3, kernel_size=3, stride=1, bn=False, relu=False)
+        # else:
+        #     self.to_rgb = Conv(128, 3, kernel_size=3, stride=1, bn=False, relu=False)
+        # self.sigmoid = nn.Sigmoid()
 
     def forward(self, heat_map_norm, part_appearances, mu, prec):
         encoding = feat_mu_to_enc(part_appearances, mu, prec, self.device, self.covariance, self.reconstr_dim, self.background)
         reconstruction = self.decoder_old(encoding)
+
+        # With Transformer
+        # encoding = torch.einsum('bkij, bkn -> bnij', heat_map_norm, part_appearances)
+        # out = self.vit_decoder(encoding)
+        # out = self.up_Conv1(out)
+        # if self.reconstr_dim == 256:
+        #     out = self.up_Conv2(out)
+        # reconstruction = self.sigmoid(self.to_rgb(out))
 
         return reconstruction
 
@@ -404,15 +447,42 @@ def main(arg):
     arg.device = device
 
     # Load Datasets and DataLoader
-    dataset = get_dataset(arg.dataset)
+    if arg.dataset != "mix":
+        dataset = get_dataset(arg.dataset)
     if arg.dataset == 'pennaction':
         init_dataset = dataset(size=arg.reconstr_dim, action_req=["tennis_serve", "tennis_forehand", "baseball_pitch",
                                                                   "baseball_swing", "jumping_jacks", "golf_swing"])
         splits = [int(len(init_dataset) * 0.8), len(init_dataset) - int(len(init_dataset) * 0.8)]
-        train_dataset, test_dataset = torch.utils.data.random_split(init_dataset, splits)
-    else:
+        train_dataset, test_dataset = random_split(init_dataset, splits, generator=torch.Generator().manual_seed(42))
+    elif arg.dataset =='deepfashion':
         train_dataset = dataset(size=arg.reconstr_dim, train=True)
         test_dataset = dataset(size=arg.reconstr_dim, train=False)
+    elif arg.dataset == 'human36':
+        init_dataset = dataset(size=arg.reconstr_dim)
+        splits = [int(len(init_dataset) * 0.8), len(init_dataset) - int(len(init_dataset) * 0.8)]
+        train_dataset, test_dataset = random_split(init_dataset, splits, generator=torch.Generator().manual_seed(42))
+    elif arg.dataset == 'mix':
+        # add pennaction
+        dataset_pa = get_dataset("pennaction")
+        init_dataset_pa = dataset_pa(size=arg.reconstr_dim, action_req=["tennis_serve", "tennis_forehand", "baseball_pitch",
+                                                                  "baseball_swing", "jumping_jacks", "golf_swing"], mix=True)
+        splits_pa = [int(len(init_dataset_pa) * 0.8), len(init_dataset_pa) - int(len(init_dataset_pa) * 0.8)]
+        train_dataset_pa, test_dataset_pa = random_split(init_dataset_pa, splits_pa, generator=torch.Generator().manual_seed(42))
+        # add deepfashion
+        dataset_df = get_dataset("deepfashion")
+        train_dataset_df = dataset_df(size=arg.reconstr_dim, train=True, mix=True)
+        test_dataset_df = dataset_df(size=arg.reconstr_dim, train=False, mix=True)
+        # add human36
+        dataset_h36 = get_dataset("human36")
+        init_dataset_h36 = dataset_h36(size=arg.reconstr_dim, mix=True)
+        splits_h36 = [int(len(init_dataset_h36) * 0.8), len(init_dataset_h36) - int(len(init_dataset_h36) * 0.8)]
+        train_dataset_h36, test_dataset_h36 = random_split(init_dataset_h36, splits_h36, generator=torch.Generator().manual_seed(42))
+        # Concatinate all
+        train_datasets = [train_dataset_df, train_dataset_h36]
+        test_datasets = [test_dataset_df, test_dataset_h36]
+        train_dataset = ConcatDataset(train_datasets)
+        test_dataset = ConcatDataset(test_datasets)
+
     train_loader = DataLoader(train_dataset, batch_size=bn, shuffle=True, num_workers=4)
     test_loader = DataLoader(test_dataset, batch_size=bn, shuffle=True, num_workers=4)
 
@@ -433,7 +503,7 @@ def main(arg):
         print(f'Number of Parameters: {count_parameters(model)}')
 
         # Definde Optimizer
-        optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=1e-5)
+        optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=arg.weight_decay)
         # scheduler = ReduceLROnPlateau(optimizer, factor=0.2, threshold=1e-3, patience=3)
 
         # Log with wandb

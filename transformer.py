@@ -4,6 +4,7 @@ from einops import rearrange, repeat
 from torch import nn
 from performer_pytorch import SelfAttention
 
+
 class Conv(nn.Module):
     def __init__(self, inp_dim, out_dim, kernel_size=3, stride=1, bn=True, relu=True):
         super(Conv, self).__init__()
@@ -186,6 +187,8 @@ class ViT(nn.Module):
 
         x = rearrange(img, 'b c (h p1) (w p2) -> b (h w) (p1 p2 c)', p1 = p, p2 = p)
         x = self.patch_to_embedding(x)
+        print(x.shape)
+        print(self.pos_embedding.shape)
         b, n, c = x.shape
 
         x += self.pos_embedding[:, :n]
@@ -195,8 +198,10 @@ class ViT(nn.Module):
 
         x = self.conv(x)
         x = self.up_Conv1(x)
-        x = self.up_Conv2(x)
-        #
+        if self.patch_size == 4 or self.patch_size == 8:
+            x = self.up_Conv2(x)
+        if self.patch_size == 8:
+            x = self.up_Conv3(x)
 
         x = self.to_partmap(x)
 
@@ -204,18 +209,18 @@ class ViT(nn.Module):
 
 if __name__ == '__main__':
     VT = ViT(
-        image_size=64,
-        patch_size=4,
+        image_size=256,
+        patch_size=8,
         dim=256,
         depth=8,
         heads=8,
         mlp_dim=256,
         dropout=0.1,
-        channels=256,
+        channels=3,
         emb_dropout=0.1,
         nk=17
     )
 
-    img = torch.randn(8, 256, 64, 64)
+    img = torch.randn(8, 3, 256, 256)
     out = VT(img)
     print(out.shape)

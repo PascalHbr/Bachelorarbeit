@@ -5,6 +5,10 @@ from matplotlib import colors
 from matplotlib.backends.backend_pdf import PdfPages
 from architecture import softmax
 from ops import get_heat_map, get_mu_and_prec
+from Dataloader import DataLoader, get_dataset
+import random
+
+import pandas as pd
 
 import os
 from glob import glob
@@ -13,6 +17,10 @@ from natsort import natsorted
 import h5py
 import scipy.io
 import wandb
+import json
+import hdfdict
+from json import JSONEncoder
+
 
 
 def count_parameters(model):
@@ -40,11 +48,11 @@ def make_visualization(original, original_part_maps, labels, reconstruction, sha
     # Get Maps
     fmap_shape_norm = softmax(fmap_shape)
     mu_shape, L_inv_shape = get_mu_and_prec(fmap_shape_norm, device, L_inv_scale)
-    heat_map_shape = get_heat_map(mu_shape, L_inv_shape, device)
+    heat_map_shape = get_heat_map(mu_shape, L_inv_shape, device, background=False)
 
     fmap_app_norm = softmax(fmap_app)
     mu_app, L_inv_app = get_mu_and_prec(fmap_app_norm, device, L_inv_scale)
-    heat_map_app = get_heat_map(mu_app, L_inv_app, device)
+    heat_map_app = get_heat_map(mu_app, L_inv_app, device, background=False)
 
     overlay_original, img_with_marker = visualize_keypoints(original, original_part_maps, labels, L_inv_scale, device,
                                                             show_labels)
@@ -183,7 +191,7 @@ def visualize_keypoints(img, fmap, labels, L_inv_scale, device, show_labels):
     # Make Heatmap Overlay
     fmap_norm = softmax(fmap)
     mu, L_inv = get_mu_and_prec(fmap_norm, device, L_inv_scale)
-    heat_map = get_heat_map(mu, L_inv, device)
+    heat_map = get_heat_map(mu, L_inv, device, )
 
     norm = torch.sum(heat_map, 1, keepdim=True) + 1
     heat_map = heat_map / norm
@@ -211,7 +219,7 @@ def visualize_keypoints(img, fmap, labels, L_inv_scale, device, show_labels):
 
 
 def keypoint_metric(prediction, ground_truth, image_size=256):
-    bn, nk, _ = prediction.shape
+    bn, _, nk, _ = ground_truth.shape
     preds = ((prediction + 1.) / 2. * image_size).float().detach().cpu()
     gt = ground_truth[:, 0].float().detach().cpu()
     first_indices = torch.arange(bn)[:, None]
@@ -235,66 +243,13 @@ def keypoint_metric(prediction, ground_truth, image_size=256):
                 if distance < best_distance:
                     best_distance = distance
                     best_index = i
-            if len(preds_bn) > 1:
-                preds_bn = torch.cat([preds_bn[:best_index], preds_bn[best_index + 1:]])
+            # if len(preds_bn) > 1:
+            #     preds_bn = torch.cat([preds_bn[:best_index], preds_bn[best_index + 1:]])
             distances += best_distance
 
     distance_norm = distances / (bn * nk * image_size)
 
     return distance_norm
-
-
-def crop_and_resize(image, bbox, keypoint, size=256):
-    image_org = image.copy()
-    for i in range(13):
-        cv2.drawMarker(image_org, (int(keypoint[i][1]), int(keypoint[i][0])), (1., 0, 0),
-                       markerType=cv2.MARKER_CROSS, markerSize=15, thickness=1, line_type=cv2.LINE_AA)
-    plt.imshow(image_org)
-    plt.show()
-
-    h, w, c = image.shape
-    image_crop = image[int(bbox[1]):int(bbox[3]), int(bbox[0]):int(bbox[2]), :]
-    h_, w_, c_ = image_crop.shape
-    long_side = max(h_, w_)
-    diff = max(h_, w_) - min(h_, w_)
-    if diff % 2 != 0:
-        diff += 1
-    padding = diff / 2
-    if long_side == h_:
-        left_padding = min(padding, int(bbox[0]))
-        right_padding = min(long_side - left_padding - w_, w - int(bbox[2]))
-        if left_padding + w_ + right_padding < long_side:
-            left_padding += long_side - (left_padding + w_ + right_padding)
-        upper_padding = 0
-        under_padding = 0
-    else:
-        upper_padding = min(padding, int(bbox[1]))
-        under_padding = min(long_side - upper_padding- h_, h - int(bbox[3]))
-        if upper_padding + h_ + under_padding < long_side:
-            upper_padding += long_side - (upper_padding + h_ + under_padding)
-        left_padding = 0
-        right_padding = 0
-
-    left_bound = int(bbox[0]) - int(left_padding)
-    right_bound = int(bbox[2]) + int(right_padding)
-    upper_bound = int(bbox[1]) - int(upper_padding)
-    under_bound = int(bbox[3]) + int(under_padding)
-
-    keypoint[:, 1] -= left_bound
-    keypoint[:, 0] -= upper_bound
-
-    scale = size / long_side
-    keypoint *= scale
-
-    image_crop = image[upper_bound:under_bound, left_bound:right_bound, :]
-    image_crop = cv2.resize(image_crop, (size, size))
-    for i in range(13):
-        cv2.drawMarker(image_crop, (int(keypoint[i][1]), int(keypoint[i][0])), (1., 0, 0),
-                       markerType=cv2.MARKER_CROSS, markerSize=15, thickness=1, line_type=cv2.LINE_AA)
-    plt.imshow(image_crop)
-    plt.show()
-
-    return image_crop, keypoint
 
 
 def visualize_SAE(org, img_reconstr, mu, prec, part_map_norm, heat_map_norm, labels, directory, epoch, show_labels=True):
@@ -354,26 +309,24 @@ def visualize_SAE(org, img_reconstr, mu, prec, part_map_norm, heat_map_norm, lab
     return img
 
 
+class NumpyArrayEncoder(JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return JSONEncoder.default(self, obj)
+
 if __name__ == '__main__':
-    sequencepath = "/export/scratch/compvis/datasets/Penn_Action/frames/"
-    labelpath = "/export/scratch/compvis/datasets/Penn_Action/labels/"
-    sequences = natsorted(glob(os.path.join(sequencepath, "*")))
-    annotations = natsorted(glob(os.path.join(labelpath, "*.mat")))
+    pass
+    base_path = "/export/scratch/compvis/datasets/human3.6M/"
+    annot_path = base_path + "processed/all/annot.h5"
 
-    for i, img_path in enumerate(sequences):
-        image = cv2.imread(img_path + "/000001.jpg")
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        name = annotations[i]
-        print(name)
-        dic = scipy.io.loadmat(annotations[i])
-        nframes = dic['nframes'][0][0]
-        # dic['shape'] = [image.shape for i in range(nframes)]
-        # scipy.io.savemat(name, dic, oned_as='row')
+    with h5py.File(annot_path, "r") as f:
+        random_indices = sorted(random.sample(range(1, 2108571), 12000))
+        f_sub = {key: [x.decode('UTF-8') if isinstance(x, bytes) else x.tolist() for x in f[key][random_indices]] for key in f.keys()}
+        with open('../very_annot_small.json', 'w') as fp:
+            json.dump(f_sub, fp, cls=NumpyArrayEncoder)
+        # f_sub = {key: f[key][random_indices] for key in f.keys()}
+        # fname = '../annot_very_small.h5'
+        # hdfdict.dump(f_sub, fname)
 
 
-    # Select Image
-    # index = 55000
-    # image = cv2.imread(images[index])
-    # image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-    # keypoint = keypoints[index].reshape(13, 2)
-    # bbox = bboxes[index]

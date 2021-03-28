@@ -19,7 +19,7 @@ def parse_args():
 
     # modes
     parser.add_argument('--batch_size', default=8, type=int,  help="batchsize if not slim and 2 * batchsize if slim")
-    parser.add_argument('--n_parts', default=17, type=int, help="number of parts")
+    parser.add_argument('--n_parts', default=20, type=int, help="number of parts")
     parser.add_argument('--n_features', default=128, type=int,  help="neurons of feature map layer")
     parser.add_argument('--n_c', default=3, type=int)
     parser.add_argument('--residual_dim', default=256, type=int,  help="neurons in residual module of the hourglass")
@@ -42,7 +42,7 @@ def parse_args():
     # tps parameters
     parser.add_argument('--fold_with_shape', default=True, type=bool, help="fold with shape or with mu")
     parser.add_argument('--l_2_scal', default=0.4, type=float, help="scale around part means that is considered for l2")
-    parser.add_argument('--l_2_threshold', default=0.05, type=float, help="")
+    parser.add_argument('--l_2_threshold', default=0., type=float, help="")
     parser.add_argument('--L_inv_scal', default=0.8, type=float, help="")
     parser.add_argument('--scal', default=0.9, type=float, help="default 0.6 sensible schedule [0.6, 0.6]")
     parser.add_argument('--tps_scal', default=0.08, type=float, help="sensible schedule [0.01, 0.08]")

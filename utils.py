@@ -309,6 +309,38 @@ def visualize_SAE(org, img_reconstr, mu, prec, part_map_norm, heat_map_norm, lab
     return img
 
 
+def visualize_predictions(org, mu, directory):
+    color_list = [(0,0,0), (255,255,255), (255,0,0), (0,255,0), (0,0,255), (255,255,0), (0,255,255), (255,0,255), (174, 101, 0),
+                  (192,192,192), (128,128,128), (128,0,0), (128,128,0), (0,128,0), (128,0,128), (0,128,128), (0,0,128)]
+
+    bn = org.shape[0]
+    assert bn % 4 == 0
+    original, mu = org.permute(0, 2, 3, 1).cpu().detach().numpy(), mu.cpu().detach().numpy()
+    img = np.ascontiguousarray(original)
+    mu_scale = (mu + 1.) / 2. * img.shape[1]
+    n_parts = mu.shape[1]
+    for i, image in enumerate(img):
+        for k in range(n_parts):
+            cv2.drawMarker(image, (int(mu_scale[i][k][1]), int(mu_scale[i][k][0])), color_list[k],
+                           markerType=cv2.MARKER_TILTED_CROSS, markerSize=10, thickness=2, line_type=cv2.LINE_AA)
+
+    with PdfPages(directory + 'predictions.pdf') as pdf:
+        fig_head, axs_head = plt.subplots(bn // 4, 4, figsize=(15, 15))
+        fig_head.suptitle("Overview", fontsize="x-large")
+        for i in range(bn):
+            axs_head[i // 4, i % 4].imshow(img[i])
+            axs_head[i // 4, i % 4].axis('off')
+
+        pdf.savefig(fig_head)
+
+        fig_head.canvas.draw()
+        w, h = fig_head.canvas.get_width_height()
+        img = np.fromstring(fig_head.canvas.tostring_rgb(), dtype=np.uint8, sep='').reshape((w, h, 3))
+
+        plt.close('all')
+
+    return img
+
 class NumpyArrayEncoder(JSONEncoder):
     def default(self, obj):
         if isinstance(obj, np.ndarray):

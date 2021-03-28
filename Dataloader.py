@@ -63,6 +63,10 @@ class Human36MDataset(Dataset):
             self.images = [path for path in list(f['frame_path'])]
             self.keypoints = [np.flip(np.array(keypoint)).copy() for keypoint in list(f['keypoints'])]
             self.bboxes = [self.make_bbox(keypoint) for keypoint in self.keypoints]
+        # with h5py.File("/export/scratch/compvis/datasets/human3.6M/processed/all/annot.h5", "r") as f:
+        #     self.images = [path.decode('UTF-8') for path in list(f['frame_path'])]
+        #     self.keypoints = [np.flip(np.array(keypoint)).copy() for keypoint in list(f['keypoints'])]
+        #     self.bboxes = [self.make_bbox(keypoint) for keypoint in self.keypoints]
 
         self.transforms = transforms.Compose([transforms.ToTensor()])
         self.mix = mix

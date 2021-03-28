@@ -5,7 +5,7 @@ from transformations import tps_parameters, make_input_tps_param, ThinPlateSplin
 import torch.nn.functional as F
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from Dataloader import DataLoader, get_dataset
-from utils import save_model, load_model, keypoint_metric, visualize_SAE, count_parameters
+from utils import save_model, load_model, keypoint_metric, visualize_SAE, count_parameters, visualize_predictions
 from config import parse_args, write_hyperparameters
 from dotmap import DotMap
 import os
@@ -195,8 +195,8 @@ class Encoder(nn.Module):
         # self.to_parts = Conv(residual_dim, self.k, kernel_size=3, stride=1, bn=False, relu=False)
 
         # Hourglass Appearance
-        # self.hg_appearance = Hourglass(depth_a, residual_dim)
-        # self.to_features = Conv(residual_dim, n_features, kernel_size=1, stride=1, bn=False, relu=False)
+        self.hg_appearance = Hourglass(depth_a, residual_dim)
+        self.to_features = Conv(residual_dim, n_features, kernel_size=1, stride=1, bn=False, relu=False)
 
         # Transformer Shape
         self.conv1 = Conv(residual_dim, residual_dim, kernel_size=3, stride=1, bn=True, relu=True)
@@ -213,18 +213,18 @@ class Encoder(nn.Module):
                        nk=self.k
                        )
 
-        self.vit_appearance = ViT(
-            image_size=64,
-            patch_size=t_patch_size,
-            dim=t_dim,
-            depth=t_depth,
-            heads=t_heads,
-            mlp_dim=t_mlp_dim,
-            dropout=0.1,
-            channels=256,
-            emb_dropout=0.1,
-            nk=n_features
-        )
+        # self.vit_appearance = ViT(
+        #     image_size=64,
+        #     patch_size=t_patch_size,
+        #     dim=t_dim,
+        #     depth=t_depth,
+        #     heads=t_heads,
+        #     mlp_dim=t_mlp_dim,
+        #     dropout=0.1,
+        #     channels=256,
+        #     emb_dropout=0.1,
+        #     nk=n_features
+        # )
 
     def forward(self, img):
         bn = img.shape[0]
@@ -268,11 +268,11 @@ class Encoder(nn.Module):
             heat_map_norm[:, -1] = 1 / heat_map_norm[:, -1]
 
         # Get Appearance Representation
-        # img_app = self.hg_appearance(stack)
-        # raw_features = self.to_features(img_app)
+        img_app = self.hg_appearance(stack)
+        raw_features = self.to_features(img_app)
 
         # Transformer
-        raw_features = self.vit_appearance(stack)
+        # raw_features = self.vit_appearance(stack)
 
         part_appearances = torch.einsum('bfij, bkij -> bkf', raw_features, heat_map_norm)
 
@@ -287,51 +287,51 @@ class Decoder(nn.Module):
         self.reconstr_dim = reconstr_dim
         self.covariance = covariance
         self.background = background
-        self.decoder_old = Decoder_old(self.k, n_features, reconstr_dim)
+        # self.decoder_old = Decoder_old(self.k, n_features, reconstr_dim)
 
-        # self.vit_decoder = ViT(
-        #     image_size=64,
-        #     patch_size=4,
-        #     dim=256,
-        #     depth=8,
-        #     heads=8,
-        #     mlp_dim=1024,
-        #     dropout=0.1,
-        #     channels=n_features,
-        #     emb_dropout=0.1,
-        #     nk=256
-        # )
-        # self.relu = nn.ReLU()
-        # self.bn1 = nn.InstanceNorm2d(128)
-        # self.bn2 = nn.InstanceNorm2d(64)
-        # self.up_Conv1 = nn.Sequential(
-        #                               nn.ConvTranspose2d(in_channels=256, out_channels=128, kernel_size=4,
-        #                                                  stride=2, padding=1),
-        #                               self.bn1,
-        #                               self.relu)
-        #
-        # self.up_Conv2 = nn.Sequential(
-        #                               nn.ConvTranspose2d(in_channels=128, out_channels=64, kernel_size=4,
-        #                                                  stride=2, padding=1),
-        #                               self.bn2,
-        #                               self.relu)
-        # if self.reconstr_dim == 256:
-        #     self.to_rgb = Conv(64, 3, kernel_size=3, stride=1, bn=False, relu=False)
-        # else:
-        #     self.to_rgb = Conv(128, 3, kernel_size=3, stride=1, bn=False, relu=False)
-        # self.sigmoid = nn.Sigmoid()
+        self.vit_decoder = ViT(
+            image_size=64,
+            patch_size=4,
+            dim=256,
+            depth=8,
+            heads=8,
+            mlp_dim=1024,
+            dropout=0.1,
+            channels=n_features,
+            emb_dropout=0.1,
+            nk=256
+        )
+        self.relu = nn.ReLU()
+        self.bn1 = nn.InstanceNorm2d(128)
+        self.bn2 = nn.InstanceNorm2d(64)
+        self.up_Conv1 = nn.Sequential(
+                                      nn.ConvTranspose2d(in_channels=256, out_channels=128, kernel_size=4,
+                                                         stride=2, padding=1),
+                                      self.bn1,
+                                      self.relu)
+
+        self.up_Conv2 = nn.Sequential(
+                                      nn.ConvTranspose2d(in_channels=128, out_channels=64, kernel_size=4,
+                                                         stride=2, padding=1),
+                                      self.bn2,
+                                      self.relu)
+        if self.reconstr_dim == 256:
+            self.to_rgb = Conv(64, 3, kernel_size=3, stride=1, bn=False, relu=False)
+        else:
+            self.to_rgb = Conv(128, 3, kernel_size=3, stride=1, bn=False, relu=False)
+        self.sigmoid = nn.Sigmoid()
 
     def forward(self, heat_map_norm, part_appearances, mu, prec):
-        encoding = feat_mu_to_enc(part_appearances, mu, prec, self.device, self.covariance, self.reconstr_dim, self.background)
-        reconstruction = self.decoder_old(encoding)
+        # encoding = feat_mu_to_enc(part_appearances, mu, prec, self.device, self.covariance, self.reconstr_dim, self.background)
+        # reconstruction = self.decoder_old(encoding)
 
         # With Transformer
-        # encoding = torch.einsum('bkij, bkn -> bnij', heat_map_norm, part_appearances)
-        # out = self.vit_decoder(encoding)
-        # out = self.up_Conv1(out)
-        # if self.reconstr_dim == 256:
-        #     out = self.up_Conv2(out)
-        # reconstruction = self.sigmoid(self.to_rgb(out))
+        encoding = torch.einsum('bkij, bkn -> bnij', heat_map_norm, part_appearances)
+        out = self.vit_decoder(encoding)
+        out = self.up_Conv1(out)
+        if self.reconstr_dim == 256:
+            out = self.up_Conv2(out)
+        reconstruction = self.sigmoid(self.to_rgb(out))
 
         return reconstruction
 
@@ -390,42 +390,48 @@ class SAE(nn.Module):
                                arg.t_patch_size, arg.t_dim, arg.t_depth, arg.t_heads, arg.t_mlp_dim)
         self.decoder = Decoder(arg.n_features, arg.residual_dim, arg.reconstr_dim, arg.depth_s, self.device, self.k,
                                arg.covariance, self.background)
+        self.mode = arg.mode
 
     def forward(self, img):
-        bn = img.shape[0]
-        # Make Transformation
-        input_images, ground_truth_images, mesh_stack = make_pairs(img, self.arg)
-        transform_mesh = F.interpolate(mesh_stack, size=64)
-        volume_mesh = AbsDetJacobian(transform_mesh, self.device)
+        if self.mode == 'train':
+            bn = img.shape[0]
+            # Make Transformation
+            input_images, ground_truth_images, mesh_stack = make_pairs(img, self.arg)
+            transform_mesh = F.interpolate(mesh_stack, size=64)
+            volume_mesh = AbsDetJacobian(transform_mesh, self.device)
 
-        # Send through encoder
-        mu, prec, part_map_norm, heat_map_norm, part_appearances = self.encoder(input_images)
+            # Send through encoder
+            mu, prec, part_map_norm, heat_map_norm, part_appearances = self.encoder(input_images)
 
-        # Swap part appearances
-        part_appearances_swap = torch.cat([part_appearances[bn:], part_appearances[:bn]], dim=0)
+            # Swap part appearances
+            part_appearances_swap = torch.cat([part_appearances[bn:], part_appearances[:bn]], dim=0)
 
-        # Send through decoder
-        img_reconstr = self.decoder(heat_map_norm, part_appearances_swap, mu, prec)
+            # Send through decoder
+            img_reconstr = self.decoder(heat_map_norm, part_appearances_swap, mu, prec)
 
-        # Calculate Loss
-        integrant = (part_map_norm.unsqueeze(-1) * volume_mesh.unsqueeze(-1)).squeeze()
-        integrant = integrant / torch.sum(integrant, dim=[2, 3], keepdim=True)
-        mu_t = torch.einsum('akij, alij -> akl', integrant, transform_mesh)
-        transform_mesh_out_prod = torch.einsum('amij, anij -> amnij', transform_mesh, transform_mesh)
-        mu_out_prod = torch.einsum('akm, akn -> akmn', mu_t, mu_t)
-        stddev_t = torch.einsum('akij, amnij -> akmn', integrant, transform_mesh_out_prod) - mu_out_prod
+            # Calculate Loss
+            integrant = (part_map_norm.unsqueeze(-1) * volume_mesh.unsqueeze(-1)).squeeze()
+            integrant = integrant / torch.sum(integrant, dim=[2, 3], keepdim=True)
+            mu_t = torch.einsum('akij, alij -> akl', integrant, transform_mesh)
+            transform_mesh_out_prod = torch.einsum('amij, anij -> amnij', transform_mesh, transform_mesh)
+            mu_out_prod = torch.einsum('akm, akn -> akmn', mu_t, mu_t)
+            stddev_t = torch.einsum('akij, amnij -> akmn', integrant, transform_mesh_out_prod) - mu_out_prod
 
-        total_loss, rec_loss, transform_loss, precision_loss = loss_fn(bn, mu, prec, mu_t, stddev_t,
-                                                                       img_reconstr, ground_truth_images,
-                                                                       self.fold_with_shape,
-                                                                       self.l_2_scal, self.l_2_threshold, self.L_mu,
-                                                                       self.L_cov,
-                                                                       self.L_rec, self.L_sep, self.sig_sep,
-                                                                       self.background, self.device)
-        if self.background:
-            mu, prec = mu[:, :-1], prec[:, :-1]
-        return ground_truth_images, img_reconstr, mu, prec, part_map_norm, heat_map_norm, total_loss
+            total_loss, rec_loss, transform_loss, precision_loss = loss_fn(bn, mu, prec, mu_t, stddev_t,
+                                                                           img_reconstr, ground_truth_images,
+                                                                           self.fold_with_shape,
+                                                                           self.l_2_scal, self.l_2_threshold, self.L_mu,
+                                                                           self.L_cov,
+                                                                           self.L_rec, self.L_sep, self.sig_sep,
+                                                                           self.background, self.device)
+            if self.background:
+                mu, prec = mu[:, :-1], prec[:, :-1]
 
+            return ground_truth_images, img_reconstr, mu, prec, part_map_norm, heat_map_norm, total_loss
+
+        elif self.mode == 'predict':
+            mu, prec, part_map_norm, heat_map_norm, part_appearances = self.encoder(img)
+            return mu
 
 def main(arg):
     # Set random seeds
@@ -486,7 +492,7 @@ def main(arg):
     train_loader = DataLoader(train_dataset, batch_size=bn, shuffle=True, num_workers=4)
     test_loader = DataLoader(test_dataset, batch_size=bn, shuffle=True, num_workers=4)
 
-    if mode == 'train':
+    if arg.mode == 'train':
         # Make new directory
         model_save_dir = '../results/' + name
         if not os.path.exists(model_save_dir):
@@ -514,9 +520,10 @@ def main(arg):
         with torch.autograd.set_detect_anomaly(False):
             for epoch in range(epochs+1):
 
+
                 # Train on Train Set
                 model.train()
-                model.mode = 'train'
+                # model.mode = 'train'
                 for step, (original, keypoints) in enumerate(train_loader):
                     bn = original.shape[0]
                     original, keypoints = original.to(device), keypoints.to(device)
@@ -537,6 +544,21 @@ def main(arg):
                     # Track Metric
                     score = keypoint_metric(mu[:bn], keypoints)
                     wandb.log({"Metric Train": score})
+                    # Track progress
+                    if step % 10000 == 0 and bn >= 4:
+                        for step_, (original, keypoints) in enumerate(test_loader):
+                            with torch.no_grad():
+                                original, keypoints = original.to(device), keypoints.to(device)
+                                ground_truth_images, img_reconstr, mu, prec, part_map_norm, heat_map_norm, total_loss = model(
+                                    original)
+
+                                img = visualize_SAE(ground_truth_images, img_reconstr, mu, prec, part_map_norm,
+                                                    heat_map_norm,
+                                                    keypoints, model_save_dir + '/summary/', epoch)
+                                wandb.log({"Summary at step" + str(step): [wandb.Image(img)]})
+                                if step_ == 0:
+                                    break
+
 
                 # Evaluate on Test Set
                 model.eval()
@@ -561,7 +583,6 @@ def main(arg):
                 # Track Progress & Visualization
                 for step, (original, keypoints) in enumerate(test_loader):
                     with torch.no_grad():
-                        model.mode = 'predict'
                         original, keypoints = original.to(device), keypoints.to(device)
                         ground_truth_images, img_reconstr, mu, prec, part_map_norm, heat_map_norm, total_loss = model(original)
 
@@ -572,6 +593,34 @@ def main(arg):
 
                         if step == 0:
                             break
+
+    elif arg.mode == 'predict':
+        # Make Directory for Predictions
+        model_save_dir = '../results/' + name
+        prediction_save_dir = model_save_dir + '/predictions/'
+        if not os.path.exists(prediction_save_dir):
+            os.makedirs(prediction_save_dir)
+
+        # Load Model and Dataset
+        model = SAE(arg).to(device)
+        model = load_model(model, model_save_dir, device)
+        model.eval()
+
+        # Log with wandb
+        wandb.init(project='Disentanglement', config=arg, name=arg.name)
+        wandb.watch(model, log='all')
+
+        # Predict on Dataset
+        for step, (original, keypoints) in enumerate(test_loader):
+            with torch.no_grad():
+                original, keypoints = original.to(device), keypoints.to(device)
+                mu = model(original)
+                img = visualize_predictions(original, mu, model_save_dir)
+                wandb.log({"Prediction": [wandb.Image(img)]})
+
+                if step == 0:
+                    break
+
 
 if __name__ == '__main__':
     arg = DotMap(vars(parse_args()))

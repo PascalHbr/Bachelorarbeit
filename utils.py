@@ -5,20 +5,10 @@ from matplotlib import colors
 from matplotlib.backends.backend_pdf import PdfPages
 from architecture import softmax
 from ops import get_heat_map, get_mu_and_prec
-from Dataloader import DataLoader, get_dataset
 import random
-
-import pandas as pd
-
-import os
-from glob import glob
 import cv2
-from natsort import natsorted
 import h5py
-import scipy.io
-import wandb
 import json
-import hdfdict
 from json import JSONEncoder
 
 

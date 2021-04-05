@@ -5,7 +5,7 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--name', default="trial1", type=str, help="name of the experiment", required=True)
     parser.add_argument('--gpu', type=int, default=None, required=True)
-    parser.add_argument('--dataset', default='human36', help="name of the dataset")
+    parser.add_argument('--dataset', default='deepfashion', help="name of the dataset")
 
     # run setting
     parser.add_argument('--mode', default='train', choices=['train', 'predict'])

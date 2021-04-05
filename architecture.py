@@ -1,11 +1,6 @@
 import torch
 import torch.nn as nn
 from transformer import ViT
-import torch.nn.functional as F
-import numpy as np
-from ops import get_heat_map, get_mu_and_prec
-from detr_model import DETR, ResNet
-from ResViT import ViTResNet, BasicBlock
 
 
 def softmax(logit_map):

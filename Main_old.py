@@ -85,7 +85,6 @@ def main(arg):
                     # Zero out gradients
                     optimizer.zero_grad()
                     loss.backward()
-                    # torch.nn.utils.clip_grad_norm_(model.parameters(), arg.clip)
                     optimizer.step()
                     # Track Loss
                     wandb.log({"Training Loss": loss})

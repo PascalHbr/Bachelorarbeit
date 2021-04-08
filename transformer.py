@@ -186,16 +186,13 @@ class ViT(nn.Module):
         p = self.patch_size
 
         x = rearrange(img, 'b c (h p1) (w p2) -> b (h w) (p1 p2 c)', p1 = p, p2 = p)
-        print(x.shape)
         x = self.patch_to_embedding(x)
-        print(x.shape)
         b, n, c = x.shape
 
         x += self.pos_embedding[:, :n]
         x = self.dropout(x)
         x = self.transformer(x, mask)
         x = x.permute(0, 2, 1).reshape(b, c, self.map_size, self.map_size)
-        print(x.shape)
         x = self.conv(x)
 
         if self.map_size < 64:

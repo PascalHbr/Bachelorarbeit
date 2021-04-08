@@ -1,5 +1,6 @@
 import torch
 from Dataloader import DataLoader, get_dataset
+from ops import coordinate_transformation
 from utils import save_model, load_model, keypoint_metric, visualize_SAE, count_parameters, visualize_predictions
 from config import parse_args, write_hyperparameters
 from dotmap import DotMap
@@ -8,17 +9,6 @@ import numpy as np
 import wandb
 from torch.utils.data import ConcatDataset, random_split
 from Model import Model
-
-
-def coordinate_transformation(coords, grid, device, grid_size=1000):
-    bn, k, _ = coords.shape
-    bucket = torch.linspace(-10., 10., grid_size, device=device)
-    indices = torch.bucketize(coords.contiguous(), bucket)
-    indices = indices.unsqueeze(-2).unsqueeze(-2)
-    grid = grid.unsqueeze(1).repeat(1, k, 1, 1, 1)
-    new_coords = torch.gather(grid, 3, indices).squeeze(-2).squeeze(-2)
-
-    return new_coords
 
 
 def main(arg):
@@ -80,7 +70,7 @@ def main(arg):
     train_loader = DataLoader(train_dataset, batch_size=bn, shuffle=True, num_workers=4)
     test_loader = DataLoader(test_dataset, batch_size=bn, shuffle=True, num_workers=4)
 
-    if arg.mode == 'train':
+    if mode == 'train':
         # Make new directory
         model_save_dir = '../results/' + name
         if not os.path.exists(model_save_dir):
@@ -116,16 +106,15 @@ def main(arg):
                     bn = original.shape[0]
                     original, keypoints = original.to(device), keypoints.to(device)
                     # Forward Pass
-                    ground_truth_images, img_reconstr, mu, prec, part_map_norm, heat_map_norm, total_loss = model(original)
+                    ground_truth_images, img_reconstr, mu, L_inv, part_map_norm, heat_map_norm, total_loss = model(original)
                     # Track Mean and Precision Matrix
                     mu_norm = torch.mean(torch.norm(mu[:bn], p=1, dim=2)).cpu().detach().numpy()
-                    L_inv_norm = torch.mean(torch.linalg.norm(prec[:bn], ord='fro', dim=[2, 3])).cpu().detach().numpy()
+                    L_inv_norm = torch.mean(torch.linalg.norm(L_inv[:bn], ord='fro', dim=[2, 3])).cpu().detach().numpy()
                     wandb.log({"Part Means": mu_norm})
                     wandb.log({"Precision Matrix": L_inv_norm})
                     # Zero out gradients
                     optimizer.zero_grad()
                     total_loss.backward()
-                    # torch.nn.utils.clip_grad_norm_(model.parameters(), arg.clip)
                     optimizer.step()
                     # Track Loss
                     wandb.log({"Training Loss": total_loss.cpu()})
@@ -137,10 +126,10 @@ def main(arg):
                         for step_, (original, keypoints) in enumerate(test_loader):
                             with torch.no_grad():
                                 original, keypoints = original.to(device), keypoints.to(device)
-                                ground_truth_images, img_reconstr, mu, prec, part_map_norm, heat_map_norm, total_loss = model(
+                                ground_truth_images, img_reconstr, mu, L_inv, part_map_norm, heat_map_norm, total_loss = model(
                                     original)
 
-                                img = visualize_SAE(ground_truth_images, img_reconstr, mu, prec, part_map_norm,
+                                img = visualize_SAE(ground_truth_images, img_reconstr, mu, L_inv, part_map_norm,
                                                     heat_map_norm,
                                                     keypoints, model_save_dir + '/summary/', epoch)
                                 wandb.log({"Summary at step" + str(step): [wandb.Image(img)]})
@@ -156,7 +145,7 @@ def main(arg):
                     with torch.no_grad():
                         bn = original.shape[0]
                         original, keypoints = original.to(device), keypoints.to(device)
-                        ground_truth_images, img_reconstr, mu, prec, part_map_norm, heat_map_norm, total_loss= model(original)
+                        ground_truth_images, img_reconstr, mu, L_inv, part_map_norm, heat_map_norm, total_loss= model(original)
                         # Track Loss and Metric
                         score = keypoint_metric(mu[:bn], keypoints)
                         val_score += score.cpu()
@@ -172,9 +161,9 @@ def main(arg):
                 for step, (original, keypoints) in enumerate(test_loader):
                     with torch.no_grad():
                         original, keypoints = original.to(device), keypoints.to(device)
-                        ground_truth_images, img_reconstr, mu, prec, part_map_norm, heat_map_norm, total_loss = model(original)
+                        ground_truth_images, img_reconstr, mu, L_inv, part_map_norm, heat_map_norm, total_loss = model(original)
 
-                        img = visualize_SAE(ground_truth_images, img_reconstr, mu, prec, part_map_norm, heat_map_norm,
+                        img = visualize_SAE(ground_truth_images, img_reconstr, mu, L_inv, part_map_norm, heat_map_norm,
                                             keypoints, model_save_dir + '/summary/', epoch)
                         wandb.log({"Summary_" + str(epoch): [wandb.Image(img)]})
                         save_model(model, model_save_dir)
@@ -182,7 +171,7 @@ def main(arg):
                         if step == 0:
                             break
 
-    elif arg.mode == 'predict':
+    elif mode == 'predict':
         # Make Directory for Predictions
         model_save_dir = '../results/' + name
         prediction_save_dir = model_save_dir + '/predictions/'

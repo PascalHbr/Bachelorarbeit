@@ -181,7 +181,7 @@ def visualize_keypoints(img, fmap, labels, L_inv_scale, device, show_labels):
     # Make Heatmap Overlay
     fmap_norm = softmax(fmap)
     mu, L_inv = get_mu_and_prec(fmap_norm, device, L_inv_scale)
-    heat_map = get_heat_map(mu, L_inv, device, )
+    heat_map = get_heat_map(mu, L_inv, device, background=False)
 
     norm = torch.sum(heat_map, 1, keepdim=True) + 1
     heat_map = heat_map / norm

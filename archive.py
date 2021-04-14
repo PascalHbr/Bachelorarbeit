@@ -321,7 +321,7 @@ def main2(arg):
 import torch
 from transformations import ThinPlateSpline
 from opt_einsum import contract
-from architecture import softmax
+from architecture_old import softmax
 
 
 def get_local_part_appearances(f, sig):
@@ -611,7 +611,7 @@ def normalize(image):
 
 
 import torch.nn as nn
-from architecture import E, Decoder
+from architecture_old import E, Decoder
 from ops_old import feat_mu_to_enc, get_local_part_appearances, get_mu_and_prec, total_loss
 
 
@@ -861,3 +861,149 @@ def keypoint_metric(prediction, ground_truth, image_size=256):
     distance_norm = distances / (nk * image_size)
 
     return distance_norm
+
+
+def make_visualization(original, original_part_maps, labels, reconstruction, shape_transform, app_transform, fmap_shape,
+                       fmap_app, L_inv_scale, directory, epoch, device, index=0, show_labels=False):
+
+    # Color List for Parts
+    color_list = ['black', 'gray', 'brown', 'chocolate', 'orange', 'gold', 'olive', 'lawngreen', 'aquamarine', 'green',
+                  'dodgerblue', 'midnightblue', 'mediumpurple', 'indigo', 'magenta', 'pink', 'springgreen', 'red']
+
+    nk = original_part_maps.shape[1]
+
+    # Get Maps
+    fmap_shape_norm = softmax(fmap_shape)
+    mu_shape, L_inv_shape = get_mu_and_prec(fmap_shape_norm, device, L_inv_scale)
+    heat_map_shape = get_heat_map(mu_shape, L_inv_shape, device)
+
+    fmap_app_norm = softmax(fmap_app)
+    mu_app, L_inv_app = get_mu_and_prec(fmap_app_norm, device, L_inv_scale)
+    heat_map_app = get_heat_map(mu_app, L_inv_app, device)
+
+    overlay_original, img_with_marker = visualize_keypoints(original, original_part_maps, labels, L_inv_scale, device,
+                                                            show_labels)
+    cmap = colors.LinearSegmentedColormap.from_list('my_colormap',
+                                                    ['white', color_list[0]],
+                                                    256)
+
+    with PdfPages(directory + str(epoch) + '_summary.pdf') as pdf:
+        # Make Head with Overview
+        fig_head, axs_head = plt.subplots(6, 4, figsize=(12, 12))
+        fig_head.suptitle("Overview", fontsize="x-large")
+        axs_head[0, 0].imshow(original[index].permute(1, 2, 0).cpu().detach().numpy())
+        axs_head[0, 1].imshow(app_transform[index].permute(1, 2, 0).cpu().detach().numpy())
+        axs_head[0, 2].imshow(shape_transform[index].permute(1, 2, 0).cpu().detach().numpy())
+        axs_head[0, 3].imshow(reconstruction[index].permute(1, 2, 0).cpu().detach().numpy())
+
+        axs_head[1, 0].imshow(app_transform[index].permute(1, 2, 0).cpu().detach().numpy())
+        axs_head[1, 2].imshow(shape_transform[index].permute(1, 2, 0).cpu().detach().numpy())
+
+        axs_head[2, 0].imshow(reconstruction[0].permute(1, 2, 0).cpu().detach().numpy())
+        axs_head[2, 1].imshow(reconstruction[1].permute(1, 2, 0).cpu().detach().numpy())
+        axs_head[2, 2].imshow(reconstruction[2].permute(1, 2, 0).cpu().detach().numpy())
+        axs_head[2, 3].imshow(reconstruction[3].permute(1, 2, 0).cpu().detach().numpy())
+
+        axs_head[3, 0].imshow(original[0].permute(1, 2, 0).cpu().detach().numpy())
+        axs_head[3, 1].imshow(original[1].permute(1, 2, 0).cpu().detach().numpy())
+        axs_head[3, 2].imshow(original[2].permute(1, 2, 0).cpu().detach().numpy())
+        axs_head[3, 3].imshow(original[3].permute(1, 2, 0).cpu().detach().numpy())
+
+        axs_head[4, 0].imshow(overlay_original[0], cmap=cmap)
+        axs_head[4, 1].imshow(overlay_original[1], cmap=cmap)
+        axs_head[4, 2].imshow(overlay_original[2], cmap=cmap)
+        axs_head[4, 3].imshow(overlay_original[3], cmap=cmap)
+
+        axs_head[5, 0].imshow(img_with_marker[0])
+        axs_head[5, 1].imshow(img_with_marker[1])
+        axs_head[5, 2].imshow(img_with_marker[2])
+        axs_head[5, 3].imshow(img_with_marker[3])
+
+        # Part Visualization Shape Stream
+        fig_shape, axs_shape = plt.subplots(9, 6, figsize=(8, 8))
+        fig_shape.suptitle("Part Visualization Shape Stream", fontsize="x-large")
+        for i in range(nk):
+            cmap = colors.LinearSegmentedColormap.from_list('my_colormap',
+                                                            ['white', color_list[i]],
+                                                            256)
+            if i == 0:
+                overlay_shape = heat_map_shape[index][i]
+            else:
+                overlay_shape += heat_map_shape[index][i]
+
+            axs_shape[int(i / 2), (i % 2) * 3].imshow(fmap_shape[index][i].cpu().detach().numpy(), cmap=cmap)
+            axs_shape[int(i / 2), (i % 2) * 3 + 1].imshow(fmap_shape_norm[index][i].cpu().detach().numpy(), cmap=cmap)
+            axs_shape[int(i / 2), (i % 2) * 3 + 2].imshow(heat_map_shape[index][i].cpu().detach().numpy(), cmap=cmap)
+
+            if i == nk - 1:
+                cmap = colors.LinearSegmentedColormap.from_list('my_colormap',
+                                                                ['white', 'black'],
+                                                                256)
+                axs_head[1, 1].imshow(overlay_shape.cpu().detach().numpy(), cmap=cmap)
+
+        # Part Visualization Appearance Stream
+        fig_app, axs_app = plt.subplots(9, 6, figsize=(8, 8))
+        fig_app.suptitle("Part Visualization Appearance Stream", fontsize="x-large")
+        for i in range(nk):
+            cmap = colors.LinearSegmentedColormap.from_list('my_colormap',
+                                                            ['white', color_list[i]],
+                                                            256)
+            if i == 0:
+                overlay_app = heat_map_app[index][i]
+            else:
+                overlay_app += heat_map_app[index][i]
+
+            axs_app[int(i / 2), (i % 2) * 3].imshow(fmap_app[index][i].cpu().detach().numpy(), cmap=cmap)
+            axs_app[int(i / 2), (i % 2) * 3 + 1].imshow(fmap_app_norm[index][i].cpu().detach().numpy(), cmap=cmap)
+            axs_app[int(i / 2), (i % 2) * 3 + 2].imshow(heat_map_app[index][i].cpu().detach().numpy(), cmap=cmap)
+
+            if i == nk - 1:
+                cmap = colors.LinearSegmentedColormap.from_list('my_colormap',
+                                                                ['white', 'black'],
+                                                                256)
+                axs_head[1, 3].imshow(overlay_app.cpu().detach().numpy(), cmap=cmap)
+
+        pdf.savefig(fig_head)
+        pdf.savefig(fig_shape)
+        pdf.savefig(fig_app)
+
+        fig_head.canvas.draw()
+        w, h = fig_head.canvas.get_width_height()
+        img = np.fromstring(fig_head.canvas.tostring_rgb(), dtype=np.uint8, sep='').reshape((w, h, 3))
+
+        plt.close('all')
+
+    return img
+
+
+def visualize_keypoints(img, fmap, labels, L_inv_scale, device, show_labels):
+    bn, nk, h, w = fmap.shape
+
+    # Make Heatmap Overlay
+    fmap_norm = softmax(fmap)
+    mu, L_inv = get_mu_and_prec(fmap_norm, device, L_inv_scale)
+    heat_map = get_heat_map(mu, L_inv, device)
+
+    norm = torch.sum(heat_map, 1, keepdim=True) + 1
+    heat_map = heat_map / norm
+
+    heat_map_overlay = torch.sum(heat_map, dim=1).cpu().detach().numpy()
+
+    # Mark Keypoints
+    img, mu = img.permute(0, 2, 3, 1).cpu().detach().numpy(), mu.cpu().detach().numpy()
+    img = np.ascontiguousarray(img)
+    mu_scale = (mu + 1.) / 2. * img.shape[1]
+    labels = labels[:, 0].cpu().detach().numpy()
+    n_parts = mu.shape[1]
+    n_labels = labels.shape[1]
+    for i, image in enumerate(img):
+        for k in range(n_parts):
+            cv2.drawMarker(image, (int(mu_scale[i][k][1]), int(mu_scale[i][k][0])), (1., 0, 0),
+                           markerType=cv2.MARKER_CROSS, markerSize=15, thickness=1, line_type=cv2.LINE_AA)
+
+        if show_labels:
+            for n in range(n_labels):
+                cv2.drawMarker(image, (int(labels[i][n][1]), int(labels[i][n][0])), (0, 1., 0),
+                               markerType=cv2.MARKER_CROSS, markerSize=15, thickness=1, line_type=cv2.LINE_AA)
+
+    return heat_map_overlay, img

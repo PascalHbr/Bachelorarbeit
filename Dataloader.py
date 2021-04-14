@@ -9,7 +9,6 @@ import pandas as pd
 import numpy as np
 import scipy.io
 import json
-import h5py
 
 
 class DeepFashionDataset(Dataset):
@@ -20,12 +19,13 @@ class DeepFashionDataset(Dataset):
         self.basepath = "/export/scratch/compvis/datasets/deepfashion_inshop/Img/img/"
         self.csv_path = "/export/scratch/compvis/datasets/compvis-datasets/deepfashion_allJointsVisible/data_"
         self.annotations = "/export/scratch/compvis/datasets/compvis-datasets/deepfashion_allJointsVisible/data_"
+        self.use_keypoints = np.array([0, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16])
         if self.train:
             subdir_name = "train"
         else:
             subdir_name = "test"
         self.img_path = pd.read_csv(os.path.join(self.csv_path + subdir_name + ".csv"))['filename'].tolist()
-        self.keypoints = np.flip(np.array(pd.read_json(os.path.join(self.annotations + subdir_name + ".json"))['keypoints'].tolist()), 2).copy()
+        self.keypoints = np.flip(np.array(pd.read_json(os.path.join(self.annotations + subdir_name + ".json"))['keypoints'].tolist()), 2).copy()[:, self.use_keypoints] * size / 256.
         self.transforms = transforms.Compose([transforms.ToTensor()])
         self.mix = mix
 
@@ -58,10 +58,11 @@ class Human36MDataset(Dataset):
         self.img_shape = [1002, 1000, 3]
         self.base_path = "/export/scratch/compvis/datasets/human3.6M/"
         self.annot_path = "/export/home/phuber/BA/annot_small.json" if mix == False else "/export/home/phuber/BA/annot_very_small.json"
+        self.use_keypoints = np.array([1, 2, 3, 6, 7, 8, 15, 17, 18, 22, 25, 26, 30])
         with open(self.annot_path, "r") as json_file:
             f = json.load(json_file)
             self.images = [path for path in list(f['frame_path'])]
-            self.keypoints = [np.flip(np.array(keypoint)).copy() for keypoint in list(f['keypoints'])]
+            self.keypoints = [np.flip(np.array(keypoint)[self.use_keypoints]).copy() for keypoint in list(f['keypoints'])]
             self.bboxes = [self.make_bbox(keypoint) for keypoint in self.keypoints]
         # with h5py.File("/export/scratch/compvis/datasets/human3.6M/processed/all/annot.h5", "r") as f:
         #     self.images = [path.decode('UTF-8') for path in list(f['frame_path'])]

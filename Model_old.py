@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from opt_einsum import contract
-from architecture import E, Decoder
+from architecture_old import E, Decoder
 from ops import prepare_pairs, AbsDetJacobian, feat_mu_to_enc, get_local_part_appearances, get_mu_and_prec, loss_fn, augm
 from transformations import tps_parameters, make_input_tps_param, ThinPlateSpline
 

@@ -1,13 +1,8 @@
 import torch
 import torch.nn.functional as F
-from torchvision import models
-import torchvision.transforms as T
 import kornia.augmentation as K
 from opt_einsum import contract
 import torch.nn as nn
-import numpy as np
-from PIL import Image
-import matplotlib.pyplot as plt
 from transformations import tps_parameters, make_input_tps_param, ThinPlateSpline
 
 
@@ -144,7 +139,7 @@ def softmax(logit_map):
     return map_norm
 
 
-def get_heat_map(mu, L_inv, device, h=64):
+def get_heat_map(mu, L_inv, device, background, h=64):
     h, w, bn, nk = h, h, L_inv.shape[0], L_inv.shape[1]
 
     y_t = torch.linspace(-1., 1., h, device=device).reshape(h, 1).repeat(1, w)
@@ -161,21 +156,26 @@ def get_heat_map(mu, L_inv, device, h=64):
     heat = 1 / (1 + proj_precision)
     heat = heat.reshape(bn, nk, h, w)  # bn number parts width height
 
+    if background:
+        heat[:, -1] = 1 / (heat[:, -1] + 1e-12)
+
     return heat
 
 
-def precision_dist_op(precision, dist, part_depth, nk, h, w):
+def precision_dist_op(precision, dist, part_depth, nk, h, w, background):
     proj_precision = contract('bnik, bnkf -> bnif', precision, dist) ** 2  # tf.matmul(precision, dist)**2
     proj_precision = torch.sum(proj_precision, -2)  # sum x and y axis
     heat = 1 / (1 + proj_precision)
     heat = heat.reshape(-1, nk, h, w)  # bn number parts width height
+    if background:
+        heat[:, -1] = 1 / (heat[:, -1] + 1e-12)
 
     part_heat = heat[:, :part_depth]
 
     return heat, part_heat
 
 
-def feat_mu_to_enc(features, mu, L_inv, device, reconstr_dim):
+def feat_mu_to_enc(features, mu, L_inv, device, reconstr_dim, background):
     bn, nk, nf = features.shape
     if reconstr_dim == 128:
         reconstruct_stages = [[128, 128], [64, 64], [32, 32], [16, 16], [8, 8], [4, 4]]
@@ -201,7 +201,7 @@ def feat_mu_to_enc(features, mu, L_inv, device, reconstr_dim):
         eps = 1e-6
         dist = mesh - mu.unsqueeze(-1) + eps
 
-        heat_shape, part_heat_shape = precision_dist_op(L_inv, dist, part_depth, nk, h, w)
+        heat_shape, part_heat_shape = precision_dist_op(L_inv, dist, part_depth, nk, h, w, background)
 
         nkf = feat_slice[1] - feat_slice[0]
 
@@ -221,47 +221,80 @@ def feat_mu_to_enc(features, mu, L_inv, device, reconstr_dim):
 
 
 def heat_map_function(y_dist, x_dist, y_scale, x_scale):
-    x = 1 / (1 + (torch.square(y_dist / (1e-6 + y_scale)) + torch.square(x_dist / (1e-6 + x_scale))))
+    x = 1 / (1 + (torch.square(y_dist / (1e-6 + y_scale)) + torch.square(
+        x_dist / (1e-6 + x_scale))))
     return x
 
 
-def fold_img_with_L_inv(img, mu, L_inv, scale, threshold, device, normalize=True):
+def fold_img_with_mu(img, mu, scale, threshold, device, normalize=True):
     bn, nc, h, w = img.shape
-    bn, nk, _ = mu.shape
+    _, nk, _ = mu.shape
 
-    mu_stop = mu.detach()
+    py = mu[:, :, 0].unsqueeze(2)
+    px = mu[:, :, 1].unsqueeze(2)
+    py = py.detach()
+    px = px.detach()
 
     y_t = torch.linspace(-1., 1., h, device=device).reshape(h, 1).repeat(1, w)
     x_t = torch.linspace(-1., 1., w, device=device).reshape(1, w).repeat(h, 1)
     x_t_flat = x_t.reshape(1, 1, -1)
     y_t_flat = y_t.reshape(1, 1, -1)
 
-    mesh = torch.cat([y_t_flat, x_t_flat], dim=-2)
-    eps = 1e-6
-    dist = mesh - mu_stop.unsqueeze(-1) + eps
+    y_dist = py - y_t_flat
+    x_dist = px - x_t_flat
 
-    proj_precision = contract('bnik, bnkf -> bnif', scale * L_inv, dist) ** 2  # tf.matmul(precision, dist)**2
-    proj_precision = torch.sum(proj_precision, -2)  # sum x and y axis
+    # Get Scaled Heatmap
 
-    heat = 1 / (1 + proj_precision)
-
-    heat = torch.reshape(heat, shape=[bn, nk, h, w])  # bn width height number parts
-    heat = contract('bkij -> bij', heat)
-    heat_scal = torch.clamp(heat, min=0., max=1.)
+    heat_scal = heat_map_function(y_dist=y_dist, x_dist=x_dist, x_scale=scale, y_scale=scale)
+    heat_scal = torch.reshape(heat_scal, shape=[bn, nk, h, w])  # bn width height number parts
+    heat_scal = torch.einsum('bkij->bij', heat_scal)
+    heat_scal = torch.clamp(heat_scal, min=0., max=1.)
     heat_scal = torch.where(heat_scal > threshold, heat_scal, torch.zeros_like(heat_scal))
 
     norm = torch.sum(heat_scal.reshape(bn, -1), dim=1).unsqueeze(1).unsqueeze(1)
     if normalize:
         heat_scal = heat_scal / norm
+
+    # Return Folded Image around Part Means
+    folded_img = contract('bcij, bij -> bcij', img, heat_scal)
+
+    return folded_img
+
+
+def fold_img_with_L_inv(img, mu, L_inv, scale, threshold, device, normalize=True):
+
+    bn, nc, h, w = img.shape
+    bn, nk, _ = mu.shape
+    # Stop Gradient Flow
+    mu_stop = mu.detach()
+
+
+    # Get Scaled Heatmap
+    heat_scal = get_heat_map(mu_stop, scale * L_inv, device, False, h)
+    heat_scal = contract('bkij -> bij', heat_scal)
+    heat_scal = torch.clamp(heat_scal, min=0., max=1.)
+    heat_scal = torch.where(heat_scal > threshold, heat_scal, torch.zeros_like(heat_scal))
+
+    # Normalize
+    norm = torch.sum(heat_scal.reshape(bn, -1), dim=1).unsqueeze(1).unsqueeze(1)
+    if normalize:
+        heat_scal = heat_scal / norm
+
+    # Return Folded Image around Part Means
     folded_img = contract('bcij, bij -> bcij', img, heat_scal)
 
     return folded_img
 
 
 def loss_fn(bn, mu, L_inv, mu_t, stddev_t, reconstruct_same_id, image_rec,
-            l_2_scal, l_2_threshold, L_mu, L_cov, L_rec, device):
+            l_2_scal, l_2_threshold, L_mu, L_cov, L_rec, device, background, fold_with_L_inv):
 
     # Equiv Loss
+    if background:
+        mu_t = mu_t[:, :-1]
+        stddev_t = stddev_t[:, :-1]
+        mu = mu[:, :-1]
+        L_inv = L_inv[:, :-1]
     mu_t_1, mu_t_2 = mu_t[:bn], mu_t[bn:]
     bn, nk, _ = mu_t_1.shape
     stddev_t_1, stddev_t_2 = stddev_t[:bn], stddev_t[bn:]
@@ -275,25 +308,16 @@ def loss_fn(bn, mu, L_inv, mu_t, stddev_t, reconstruct_same_id, image_rec,
     img_difference = reconstruct_same_id - image_rec
     distance_metric = torch.abs(img_difference)
     # Fold Image
-    fold_img_squared = fold_img_with_L_inv(distance_metric, mu.detach(), L_inv.detach(),
-                                           l_2_scal, l_2_threshold, device)
+    if fold_with_L_inv:
+        fold_img_squared = fold_img_with_L_inv(distance_metric, mu, L_inv, l_2_scal, l_2_threshold, device)
+    else:
+        fold_img_squared = fold_img_with_mu(distance_metric, mu, l_2_scal, l_2_threshold, device)
     rec_loss = torch.mean(torch.sum(fold_img_squared, dim=[2, 3]))
 
     # Get Total Loss
     total_loss = L_rec * rec_loss + L_mu * transform_loss + L_cov * precision_loss
 
     return total_loss, rec_loss, transform_loss, precision_loss
-
-
-def coordinate_transformation(coords, grid, device, grid_size=1000):
-    bn, k, _ = coords.shape
-    bucket = torch.linspace(-10., 10., grid_size, device=device)
-    indices = torch.bucketize(coords.contiguous(), bucket)
-    indices = indices.unsqueeze(-2).unsqueeze(-2)
-    grid = grid.unsqueeze(1).repeat(1, k, 1, 1, 1)
-    new_coords = torch.gather(grid, 3, indices).squeeze(-2).squeeze(-2)
-
-    return new_coords
 
 
 if __name__ == "__main__":

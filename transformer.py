@@ -197,7 +197,6 @@ class ViT(nn.Module):
 
         if self.map_size < 64:
             x = self.up_Conv1(x)
-
         if self.map_size < 32:
             x = self.up_Conv2(x)
         if self.map_size < 16:

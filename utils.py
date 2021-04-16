@@ -145,16 +145,16 @@ def visualize_predictions(org, reconstruction, mu, part_map, heat_map, mu_old, p
                   (192,192,192), (128,128,128), (128,0,0), (128,128,0), (0,128,0), (128,0,128), (0,128,128), (0,0,128)]
 
     bn = org.shape[0]
+    marker_size = 10 if org.shape[2] == 256 else 5
     assert bn % 4 == 0
     original, mu = org.permute(0, 2, 3, 1).cpu().detach().numpy(), mu.cpu().detach().numpy()
     img = np.ascontiguousarray(original)
     mu_scale = (mu + 1.) / 2. * img.shape[1]
     n_parts = mu.shape[1]
-    n_parts_old = mu_old.shape[1]
     for i, image in enumerate(img):
         for k in range(n_parts):
             cv2.drawMarker(image, (int(mu_scale[i][k][1]), int(mu_scale[i][k][0])), color_list[k],
-                           markerType=cv2.MARKER_TILTED_CROSS, markerSize=10, thickness=2, line_type=cv2.LINE_AA)
+                           markerType=cv2.MARKER_TILTED_CROSS, markerSize=marker_size, thickness=2, line_type=cv2.LINE_AA)
 
     img_old = np.ascontiguousarray(original)
     mu_scale_old = (mu_old + 1.) / 2. * img_old.shape[1]
@@ -162,7 +162,7 @@ def visualize_predictions(org, reconstruction, mu, part_map, heat_map, mu_old, p
     for i, image in enumerate(img_old):
         for k in range(n_parts_old):
             cv2.drawMarker(image, (int(mu_scale_old[i][k][1]), int(mu_scale_old[i][k][0])), color_list[k],
-                           markerType=cv2.MARKER_TILTED_CROSS, markerSize=10, thickness=2, line_type=cv2.LINE_AA)
+                           markerType=cv2.MARKER_TILTED_CROSS, markerSize=marker_size, thickness=2, line_type=cv2.LINE_AA)
 
     with PdfPages(directory + '_predictions.pdf') as pdf:
         fig_head, axs_head = plt.subplots(bn // 4, 4, figsize=(30, 30))

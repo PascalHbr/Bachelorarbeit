@@ -28,11 +28,12 @@ class Model(nn.Module):
                                arg.module, arg.device, arg.background)
 
     def forward(self, img):
+        device = img.get_device()
         bn = img.shape[0]
         # Make Transformation
         input_images, ground_truth_images, mesh_stack = make_pairs(img, self.arg)
         transform_mesh = F.interpolate(mesh_stack, size=64)
-        volume_mesh = AbsDetJacobian(transform_mesh, self.device)
+        volume_mesh = AbsDetJacobian(transform_mesh, device)
 
         # Send through encoder
         mu, L_inv, part_map_norm, heat_map, heat_map_norm, part_appearances = self.encoder(input_images)
@@ -51,11 +52,11 @@ class Model(nn.Module):
         mu_out_prod = torch.einsum('akm, akn -> akmn', mu_t, mu_t)
         stddev_t = torch.einsum('akij, amnij -> akmn', integrant, transform_mesh_out_prod) - mu_out_prod
 
-        total_loss, rec_loss, transform_loss, precision_loss = loss_fn(bn, mu, L_inv, mu_t, stddev_t, img_reconstr,
+        loss = loss_fn(bn, mu, L_inv, mu_t, stddev_t, img_reconstr,
                                                             ground_truth_images, self.l_2_scal, self.l_2_threshold,
-                                                            self.L_mu, self.L_cov, self.L_rec, self.device,
+                                                            self.L_mu, self.L_cov, self.L_rec, device,
                                                             self.background, self.fold_with_L_inv)
         if self.background:
             mu, L_inv = mu[:, :-1], L_inv[:, :-1]
 
-        return ground_truth_images, img_reconstr, mu, L_inv, part_map_norm, heat_map, heat_map_norm, total_loss
+        return ground_truth_images, img_reconstr, mu, L_inv, part_map_norm, heat_map, heat_map_norm, loss

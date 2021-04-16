@@ -113,39 +113,6 @@ def augm(t, arg):
     return augmented
 
 
-def prepare_pairs(t_images, arg, reconstr_dim=128):
-    if arg.mode == 'train':
-        bn, n_c, w, h = t_images.shape
-        t_c_1_images = augm(t_images, arg)
-        t_c_2_images = augm(t_images, arg)
-
-        if arg.static:
-            t_c_1_images = torch.cat([t_c_1_images[:bn//2].unsqueeze(1), t_c_1_images[bn//2:].unsqueeze(1)], dim=1)
-            t_c_2_images = torch.cat([t_c_2_images[:bn//2].unsqueeze(1), t_c_2_images[bn//2:].unsqueeze(1)], dim=1)
-        else:
-            t_c_1_images = t_c_1_images.reshape(bn // 2, 2, n_c, h, w)
-            t_c_2_images = t_c_2_images.reshape(bn // 2, 2, n_c, h, w)
-
-        a, b = t_c_1_images[:, 0].unsqueeze(1), t_c_1_images[:, 1].unsqueeze(1)
-        c, d = t_c_2_images[:, 0].unsqueeze(1), t_c_2_images[:, 1].unsqueeze(1)
-
-        if arg.static:
-            t_input_images = torch.cat([a, d], dim=0).reshape(bn, n_c, w, h)
-            t_reconst_images = torch.cat([c, b], dim=0).reshape(bn, n_c, w, h)
-        else:
-            t_input_images = torch.cat([a, d], dim=1).reshape(bn, n_c, w, h)
-            t_reconst_images = torch.cat([c, b], dim=1).reshape(bn, n_c, w, h)
-
-        t_input_images = torch.clamp(t_input_images, min=0., max=1.)
-        t_reconst_images = F.interpolate(torch.clamp(t_reconst_images, min=0., max=1.), size=reconstr_dim)
-
-    else:
-        t_input_images = torch.clamp(t_images, min=0., max=1.)
-        t_reconst_images = F.interpolate(torch.clamp(t_images, min=0., max=1.), size=reconstr_dim)
-
-    return t_input_images, t_reconst_images
-
-
 def AbsDetJacobian(batch_meshgrid, device):
     """
         :param batch_meshgrid: takes meshgrid tensor of dim [bn, 2, h, w] (conceptually meshgrid represents a two dimensional function f = [fx, fy] on [bn, h, w] )

@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from opt_einsum import contract
 from architecture_old import E, Decoder
-from ops import prepare_pairs, AbsDetJacobian, feat_mu_to_enc, get_local_part_appearances, get_mu_and_prec, loss_fn, augm
+from ops import AbsDetJacobian, feat_mu_to_enc, get_local_part_appearances, get_mu_and_prec, loss_fn, prepare_pairs, get_heat_map
 from transformations import tps_parameters, make_input_tps_param, ThinPlateSpline
 
 
@@ -21,15 +21,15 @@ class Model(nn.Module):
         self.depth_a = arg.depth_a
         self.p_dropout = arg.p_dropout
         self.residual_dim = arg.residual_dim
-        self.covariance = arg.covariance
+        self.covariance = True
         self.L_mu = arg.L_mu
         self.L_cov = arg.L_cov
-        self.L_rec = arg.L_rec
-        self.L_sep = arg.L_sep
-        self.sig_sep = arg.sig_sep
+        self.L_rec = 0
+        self.L_sep = 0
+        self.sig_sep = 0
         self.l_2_scal = arg.l_2_scal
         self.l_2_threshold = arg.l_2_threshold
-        self.map_threshold = arg.map_threshold
+        self.map_threshold = 0
         self.tps_scal = arg.tps_scal
         self.scal = arg.scal
         self.L_inv_scal = arg.L_inv_scal
@@ -37,7 +37,7 @@ class Model(nn.Module):
         self.off_scal = arg.off_scal
         self.scal_var = arg.scal_var
         self.augm_scal = arg.augm_scal
-        self.static = arg.static
+        self.static = True
         self.background = arg.background
         self.fold_with_shape = arg.fold_with_shape
         self.E_sigma = E(self.depth_s, self.n_parts, self.residual_dim, self.p_dropout,
@@ -67,6 +67,10 @@ class Model(nn.Module):
         raw_features = self.E_alpha(sum_part_maps)
         features = get_local_part_appearances(raw_features, part_maps_norm)
 
+        heat_map = get_heat_map(mu, L_inv, self.device, self.background)
+        norm = torch.sum(heat_map, 1, keepdim=True) + 1
+        heat_map_norm = heat_map / norm
+
         # transform
         integrant = (part_maps_norm.unsqueeze(-1) * volume_mesh.unsqueeze(-1)).squeeze()
         integrant = integrant / torch.sum(integrant, dim=[2, 3], keepdim=True)
@@ -76,32 +80,23 @@ class Model(nn.Module):
         stddev_t = contract('akij, amnij -> akmn', integrant, transform_mesh_out_prod) - mu_out_prod
 
         # processing
-        encoding = feat_mu_to_enc(features, mu, L_inv, self.device, self.covariance, self.reconstr_dim, self.static)
+        encoding = feat_mu_to_enc(features, mu, L_inv, self.device, self.reconstr_dim, self.background)
         reconstruct_same_id = self.decoder(encoding)
 
-        total_loss, rec_loss, transform_loss, precision_loss = loss_fn(batch_size, mu, L_inv, mu_t, stddev_t,
-                                                                       reconstruct_same_id, image_rec,
-                                                                       self.fold_with_shape,
-                                                                       self.l_2_scal, self.l_2_threshold, self.L_mu,
-                                                                       self.L_cov,
-                                                                       self.L_rec, self.L_sep, self.sig_sep,
-                                                                       self.background, self.device)
 
-        total_loss, rec_loss, transform_loss, precision_loss = loss_fn(batch_size, mu, L_inv, mu_t, stddev_t,
-                                                                       reconstruct_same_id, image_rec,
-                                                                       self.fold_with_shape,
-                                                                       self.l_2_scal, self.l_2_threshold, self.L_mu,
-                                                                       self.L_cov,
-                                                                       self.L_rec, self.L_sep, self.sig_sep,
-                                                                       self.background, self.device)
+        total_loss, rec_loss, transform_loss, precision_loss = loss_fn(batch_size, mu, L_inv, mu_t, stddev_t, reconstruct_same_id,
+                                                                       image_rec, self.l_2_scal,
+                                                                       self.l_2_threshold,
+                                                                       self.L_mu, self.L_cov, self.L_rec,
+                                                                       self.device,
+                                                                       self.background, True)
 
         # norms
         original_part_maps_raw, original_part_maps_norm, original_sum_part_maps = self.E_sigma(x)
         mu_original, L_inv_original = get_mu_and_prec(original_part_maps_norm, self.device, self.L_inv_scal)
 
         if self.mode == 'predict':
-            original_part_maps_raw, original_part_maps_norm, original_sum_part_maps = self.E_sigma(x)
-            return original_part_maps_raw, mu_original[:, :-1], image_rec, part_maps_raw, part_maps_raw, reconstruct_same_id
+            return image_rec, reconstruct_same_id, mu, L_inv, part_maps_norm, heat_map, heat_map_norm, total_loss
 
         elif self.mode == 'train':
             return image_rec, reconstruct_same_id, total_loss, rec_loss, transform_loss, precision_loss, mu[:, :-1], L_inv[:, :-1], mu_original[:, :-1]

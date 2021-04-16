@@ -1,6 +1,6 @@
 import torch
 from Dataloader import DataLoader, get_dataset
-from utils import save_model, load_model, make_visualization, keypoint_metric
+from utils import save_model, load_model, visualize_predictions, keypoint_metric
 from Model_old import Model
 from config import parse_args, write_hyperparameters
 from dotmap import DotMap
@@ -27,7 +27,7 @@ def main(arg):
     lr = arg.lr
     L_inv_scal = arg.L_inv_scal
     epochs = arg.epochs
-    device = torch.device('cuda:' + str(arg.gpu) if torch.cuda.is_available() else 'cpu')
+    device = torch.device('cuda:' + str(arg.gpu[0]) if torch.cuda.is_available() else 'cpu')
     arg.device = device
 
     # Load Datasets and DataLoader
@@ -41,7 +41,7 @@ def main(arg):
         train_dataset = dataset(size=arg.reconstr_dim, train=True)
         test_dataset = dataset(size=arg.reconstr_dim, train=False)
     train_loader = DataLoader(train_dataset, batch_size=bn, shuffle=True, num_workers=4)
-    test_loader = DataLoader(test_dataset, batch_size=bn, shuffle=True, num_workers=4)
+    test_loader = DataLoader(test_dataset, batch_size=bn, shuffle=False, num_workers=4)
 
     if mode == 'train':
         # Make new directory
@@ -116,11 +116,11 @@ def main(arg):
                         model.mode = 'predict'
                         original, keypoints = original.to(device), keypoints.to(device)
                         original_part_maps, mu_original, image_rec, part_maps, part_maps, reconstruction = model(original)
-                        img = make_visualization(original, original_part_maps, keypoints, reconstruction, image_rec[:original.shape[0]],
-                                           image_rec[original.shape[0]:], part_maps[original.shape[0]:], part_maps[:original.shape[0]],
-                                           L_inv_scal, model_save_dir + '/summary/', epoch, device, show_labels=False)
-                        if epoch % 5 == 0:
-                            wandb.log({"Summary_" + str(epoch): [wandb.Image(img)]})
+                        # img = visualize_predictions(original, original_part_maps, keypoints, reconstruction, image_rec[:original.shape[0]],
+                        #                    image_rec[original.shape[0]:], part_maps[original.shape[0]:], part_maps[:original.shape[0]],
+                        # #                    L_inv_scal, model_save_dir + '/summary/', epoch, device, show_labels=False)
+                        # if epoch % 5 == 0:
+                        #     wandb.log({"Summary_" + str(epoch): [wandb.Image(img)]})
                         save_model(model, model_save_dir)
 
                         if step == 0:
@@ -130,29 +130,45 @@ def main(arg):
 
     elif mode == 'predict':
         # Make Directory for Predictions
-        model_save_dir = '../results/' + name
-        prediction_save_dir = model_save_dir + '/predictions/'
-        if not os.path.exists(prediction_save_dir):
-            os.makedirs(prediction_save_dir)
+        model_save_dir = '../results/' + arg.dataset + '/' + name
+        # Dont use Transformations
+        arg.tps_scal = 0.
+        arg.rot_scal = 0.
+        arg.off_scal = 0.
+        arg.scal_var = 0.
+        arg.augm_scal = 1.
+        arg.contrast = 0.
+        arg.brightness = 0.
+        arg.saturation = 0.
+        arg.hue = 0.
 
         # Load Model and Dataset
         model = Model(arg).to(device)
         model = load_model(model, model_save_dir, device)
-        model.mode = 'predict'
         model.eval()
 
+        # Log with wandb
+        # wandb.init(project='Disentanglement', config=arg, name=arg.name)
+        # wandb.watch(model, log='all')
+
         # Predict on Dataset
+        val_score = torch.zeros(1)
         for step, (original, keypoints) in enumerate(test_loader):
             with torch.no_grad():
                 original, keypoints = original.to(device), keypoints.to(device)
-                original_part_maps, mu_original, image_rec, part_maps, part_maps, reconstruct_same_id = model(original)
-                make_visualization(original, original_part_maps, keypoints, reconstruct_same_id, image_rec[:original.shape[0]],
-                                   image_rec[original.shape[0]:], part_maps[original.shape[0]:], part_maps[:original.shape[0]],
-                                   L_inv_scal, prediction_save_dir, 0, device, show_labels=True)
-                # Track Metric
-                # score = keypoint_metric(mu_original, keypoints)
+                ground_truth_images, img_reconstr, mu, L_inv, part_map_norm, heat_map, heat_map_norm, total_loss = model(
+                    original)
+                score, mu_new, L_inv, part_map_norm_new, heat_map_new = keypoint_metric(mu, keypoints, L_inv,
+                                                                                        part_map_norm, heat_map,
+                                                                                        arg.reconstr_dim)
                 if step == 0:
-                    break
+                    img = visualize_predictions(original, img_reconstr, mu_new, part_map_norm_new, heat_map_new, mu,
+                                                part_map_norm, heat_map, model_save_dir)
+                # wandb.log({"Prediction": [wandb.Image(img)]})
+                val_score += score.cpu()
+
+        val_score = val_score / (step + 1)
+        print("Validation Score: ", val_score)
 
 
 if __name__ == '__main__':

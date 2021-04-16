@@ -27,7 +27,7 @@ def main(arg):
     load_from_ckpt = arg.load_from_ckpt
     lr = arg.lr
     epochs = arg.epochs
-    device = torch.device('cuda:' + str(arg.gpu) if torch.cuda.is_available() else 'cpu')
+    device = torch.device('cuda:' + str(arg.gpu[0]) if torch.cuda.is_available() else 'cpu')
     arg.device = device
 
     # Load Datasets and DataLoader
@@ -81,9 +81,14 @@ def main(arg):
         write_hyperparameters(arg.toDict(), model_save_dir)
 
         # Define Model
-        model = Model(arg).to(device)
+        model = Model(arg)
+        if len(arg.gpu) > 1:
+            model = torch.nn.DataParallel(model, device_ids=arg.gpu)
+        model.to(device)
         if load_from_ckpt:
             model = load_model(model, model_save_dir, device).to(device)
+        # Dataparallel
+        print(arg.gpu)
         print(f'Number of Parameters: {count_parameters(model)}')
 
         # Definde Optimizer
@@ -143,7 +148,6 @@ def main(arg):
                 val_loss = torch.zeros(1)
                 for step, (original, keypoints) in enumerate(test_loader):
                     with torch.no_grad():
-                        bn = original.shape[0]
                         original, keypoints = original.to(device), keypoints.to(device)
                         ground_truth_images, img_reconstr, mu, L_inv, part_map_norm, heat_map, heat_map_norm, total_loss= model(original)
                         # Track Loss and Metric
@@ -178,7 +182,7 @@ def main(arg):
 
     elif mode == 'predict':
         # Make Directory for Predictions
-        model_save_dir = '../good_results/' + arg.dataset + '/' + name
+        model_save_dir = '../results/' + arg.dataset + '/' + name
         # Dont use Transformations
         arg.tps_scal = 0.
         arg.rot_scal = 0.

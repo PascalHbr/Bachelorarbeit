@@ -6,7 +6,7 @@ def parse_args():
 
     # General configuration
     parser.add_argument('--name', default="trial1", type=str, help="name of the experiment", required=True)
-    parser.add_argument('--gpu', type=int, default=None, required=True)
+    parser.add_argument('--gpu', nargs="+", type=int, required=True)
     parser.add_argument('--dataset', default='pennaction', help="name of the dataset")
     parser.add_argument('--module', type=int, choices=[1, 2, 3, 4], help="1: HG-UNet, 2:ViT-UNet"
                                                                          "3: HG-ViT, 4:ViT-ViT", required=True)

@@ -177,8 +177,7 @@ def visualize_predictions(org, reconstruction, mu, part_map, heat_map, mu_old, p
         # Plot Visualization
         part_map_overlay = torch.sum(part_map_old, dim=1).cpu().detach().numpy()
         heat_map_overlay = torch.sum(heat_map_old, dim=1).cpu().detach().numpy()
-        fig_head2, axs_head = plt.subplots(4, 5, figsize=(20, 20))
-        fig_head2.suptitle("Overview", fontsize="x-large")
+        fig_head2, axs_head = plt.subplots(4, 5, figsize=(20, 20), gridspec_kw = {'wspace':0, 'hspace':0})
         for i in range(4):
             axs_head[i, 0].imshow(org[index + i].permute(1, 2, 0).cpu().detach().numpy())
             axs_head[i, 0].axis('off')
@@ -190,10 +189,25 @@ def visualize_predictions(org, reconstruction, mu, part_map, heat_map, mu_old, p
             axs_head[i, 3].axis('off')
             axs_head[i, 4].imshow(img_old[index + i])
             axs_head[i, 4].axis('off')
+        plt.subplots_adjust(wspace=0, hspace=0)
+
+        # Plot Comparison
+        fig_head3, axs_head = plt.subplots(4, 5, figsize=(20, 20))
+        for i in range(4):
+            axs_head[i, 0].imshow(img_old[i * 5])
+            axs_head[i, 0].axis('off')
+            axs_head[i, 1].imshow(img_old[i * 5 + 1])
+            axs_head[i, 1].axis('off')
+            axs_head[i, 2].imshow(img_old[i * 5 + 2])
+            axs_head[i, 2].axis('off')
+            axs_head[i, 3].imshow(img_old[i * 5 + 3])
+            axs_head[i, 3].axis('off')
+            axs_head[i, 4].imshow(img_old[i * 5 + 4])
+            axs_head[i, 4].axis('off')
+        plt.subplots_adjust(wspace=0, hspace=0)
 
         # Plot Maps
         fig_shape, axs_shape = plt.subplots(6, 8, figsize=(20, 20))
-        fig_shape.tight_layout()
         for i in range(6):
             for j in range(8):
                 axs_shape[i, j].xaxis.set_major_locator(plt.NullLocator())
@@ -226,6 +240,7 @@ def visualize_predictions(org, reconstruction, mu, part_map, heat_map, mu_old, p
         plt.subplots_adjust(wspace=0, hspace=0)
         pdf.savefig(fig_head)
         pdf.savefig(fig_head2)
+        pdf.savefig(fig_head3)
         pdf.savefig(fig_shape)
 
         fig_head.canvas.draw()

@@ -34,8 +34,9 @@ def main(arg):
     if arg.dataset != "mix":
         dataset = get_dataset(arg.dataset)
     if arg.dataset == 'pennaction':
-        init_dataset = dataset(size=arg.reconstr_dim, action_req=["tennis_serve", "tennis_forehand", "baseball_pitch",
-                                                                  "baseball_swing", "jumping_jacks", "golf_swing"])
+        # init_dataset = dataset(size=arg.reconstr_dim, action_req=["tennis_serve", "tennis_forehand", "baseball_pitch",
+        #                                                           "baseball_swing", "jumping_jacks", "golf_swing"])
+        init_dataset = dataset(size=arg.reconstr_dim)
         splits = [int(len(init_dataset) * 0.8), len(init_dataset) - int(len(init_dataset) * 0.8)]
         train_dataset, test_dataset = random_split(init_dataset, splits, generator=torch.Generator().manual_seed(42))
     elif arg.dataset =='deepfashion':
@@ -138,6 +139,7 @@ def main(arg):
                                 img = visualize_results(ground_truth_images, img_reconstr, mu, L_inv, part_map_norm,
                                                     heat_map, keypoints, model_save_dir + '/summary/', epoch, arg.background)
                                 wandb.log({"Summary at step" + str(step): [wandb.Image(img)]})
+                                save_model(model, model_save_dir)
                                 if step_ == 0:
                                     break
 
@@ -162,7 +164,7 @@ def main(arg):
                     best_score = val_score
                 if val_score <= best_score:
                     best_score = val_score
-                    save_model(model, model_save_dir)
+                save_model(model, model_save_dir)
                 scheduler.step(val_score)
                 wandb.log({"Evaluation Loss": val_loss})
                 wandb.log({"Metric Validation": val_score})

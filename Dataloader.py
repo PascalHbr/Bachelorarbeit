@@ -9,6 +9,7 @@ import pandas as pd
 import numpy as np
 import scipy.io
 import json
+import h5py
 
 
 class DeepFashionDataset(Dataset):
@@ -66,7 +67,7 @@ class Human36MDataset(Dataset):
             self.bboxes = [self.make_bbox(keypoint) for keypoint in self.keypoints]
         # with h5py.File("/export/scratch/compvis/datasets/human3.6M/processed/all/annot.h5", "r") as f:
         #     self.images = [path.decode('UTF-8') for path in list(f['frame_path'])]
-        #     self.keypoints = [np.flip(np.array(keypoint)).copy() for keypoint in list(f['keypoints'])]
+        #     self.keypoints = [np.flip(np.array(keypoint)[self.use_keypoints]).copy() for keypoint in list(f['keypoints'])]
         #     self.bboxes = [self.make_bbox(keypoint) for keypoint in self.keypoints]
 
         self.transforms = transforms.Compose([transforms.ToTensor()])
@@ -95,9 +96,6 @@ class Human36MDataset(Dataset):
         h, w, c = self.img_shape
         h_, w_ = int(bbox[3]) - int(bbox[1]), int(bbox[2]) - int(bbox[0])
         long_side = max(h_, w_)
-        # Don't use too small images
-        if long_side < 50:
-            return None, None, False
 
         # Don't just use bounding box but also a little bit more (else heads are cut off in TPS)
         padd_add = 30
@@ -158,11 +156,6 @@ class Human36MDataset(Dataset):
         keypoint[:, 0] -= upper_bound
         scale = self.size / long_side
         keypoint *= scale
-
-        # Sometimes boundaries are outside the image -> skip these images
-        if ((right_bound - left_bound) - (under_bound - upper_bound) != 0) or any(bound < 0 for bound in boundaries) \
-                or right_bound > w or under_bound > h:
-            return None, None, False
 
         return keypoint, boundaries, True
 

@@ -77,5 +77,5 @@ def write_hyperparameters(r, save_dir):
     with open(filename, "w") as input_file:
         for k, v in r.items():
             line = '{}, {}'.format(k, v)
-            print(line)
-            print(line, file=input_file)
+            # print(line)
+            # print(line, file=input_file)

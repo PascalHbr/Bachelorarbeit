@@ -1,5 +1,6 @@
 import torch
 import pytorch_lightning as pl
+from pytorch_lightning import Trainer, seed_everything
 from PL_architecture import Encoder, Decoder
 import wandb
 from PL_ops import*
@@ -143,19 +144,22 @@ class PLModel(pl.LightningModule):
             self.test_dataset = ConcatDataset(test_datasets)
 
     def train_dataloader(self):
-        train_loader = DataLoader(self.train_dataset, batch_size=self.arg.batch_size, shuffle=True, num_workers=4)
+        train_loader = DataLoader(self.train_dataset, batch_size=self.arg.batch_size, shuffle=True)
         return train_loader
 
     def val_dataloader(self):
-        test_loader = DataLoader(self.test_dataset, batch_size=self.arg.batch_size, shuffle=True, num_workers=4)
+        test_loader = DataLoader(self.test_dataset, batch_size=self.arg.batch_size, shuffle=False)
         return test_loader
 
+
 def main(arg):
+    seed_everything(42)
     model = PLModel(arg)
     wandb_logger = WandbLogger(project="Bachelorarbeit", name=arg.name)
-    # wandb_logger.watch(model)
-    # wandb_logger.log_hyperparams(arg)
-    trainer = pl.Trainer(gpus=arg.gpu, logger=wandb_logger, accelerator='ddp_spawn')
+    wandb_logger.watch(model)
+    wandb_logger.log_hyperparams(arg)
+    trainer = Trainer(gpus=2, logger=wandb_logger, distributed_backend='ddp', deterministic=True, auto_select_gpus=True,
+                      num_sanity_val_steps=0)
     trainer.fit(model)
 
 if __name__ == '__main__':
